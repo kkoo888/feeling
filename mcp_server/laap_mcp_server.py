@@ -26,8 +26,12 @@ from pathlib import Path
 # Make LAAP brain modules importable
 LAAP_ROOT = Path(__file__).resolve().parent.parent
 LAAP_BRAIN = LAAP_ROOT / "aris_brain"
-sys.path.insert(0, str(LAAP_BRAIN))
-sys.path.insert(0, str(LAAP_BRAIN / "psi_jspace_bridge"))
+if str(LAAP_ROOT) not in sys.path:
+    sys.path.insert(0, str(LAAP_ROOT))
+if str(LAAP_BRAIN) not in sys.path:
+    sys.path.insert(0, str(LAAP_BRAIN))
+if str(LAAP_BRAIN / "psi_jspace_bridge") not in sys.path:
+    sys.path.insert(0, str(LAAP_BRAIN / "psi_jspace_bridge"))
 
 import requests
 from mcp.server.fastmcp import FastMCP
