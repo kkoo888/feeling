@@ -32,6 +32,11 @@ except ImportError:
     sys.exit(1)
 
 # ── LAAP Core Integration ──────────────────────────────────────
+# 自动将项目根目录加入 sys.path
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from laap_brain.config import BRAIN_DIR as BRAIN, LAAP_ROOT
 _root = str(LAAP_ROOT)
 if _root not in sys.path:
