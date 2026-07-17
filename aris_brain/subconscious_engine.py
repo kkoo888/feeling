@@ -1,5 +1,5 @@
 """
-小茜 潜意识引擎 v3 — 进化版（40轮变异优化）
+小茜 潜意识引擎 v2 — 进化版（40轮变异优化）
 R21-R40: 自含情感引擎/语义桥接/源权重/梦境增强/否定能力/跨系统反馈/概念学习/新奇度/质量加权/多样性保留
 """
 
@@ -527,7 +527,7 @@ class SubconsciousEngine:
         self._source_weights = {"free_assoc": 1.0, "emotion": 1.0, "cross_domain": 1.0, "dream": 1.0, "insight": 1.0}
         self._coherence_history: deque = deque(maxlen=20)
         self._source_quality: Dict[str, List[float]] = defaultdict(list)
-        logger.info("SubconsciousEngine v3 initialized (evolution-40)")
+        logger.info("SubconsciousEngine v2 initialized (evolution-40)")
 
     def feed(self, text, topics=None, emotion=None):
         with self._lock:
@@ -551,7 +551,7 @@ class SubconsciousEngine:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="subconscious-v3")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="subconscious-v2")
         self._thread.start()
 
     def stop(self):
@@ -729,7 +729,7 @@ class SubconsciousEngine:
     def get_report(self):
         s = self.get_status()
         return "\n".join([
-            "=" * 55, "  潜意识引擎 v3 状态 (进化版-40轮变异)", "=" * 55,
+            "=" * 55, "  潜意识引擎 v2 状态 (进化版-40轮变异)", "=" * 55,
             f"  运行状态: {'🟢 运行中' if s['running'] else '🔴 停止'}",
             f"  直觉总数: {s['intuitions_total']}", f"  未消费直觉: {s['intuitions_unconsumed']}",
             f"  种子队列: {s['seed_queue_size']}", "", "  子系统状态:",
