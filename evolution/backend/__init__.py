@@ -1,10 +1,22 @@
 """后端模块：提供多 LLM 提供商的统一查询接口"""
 
-from . import backend_anthropic, backend_openai, backend_openrouter, backend_gemini
-from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
 import re
 import logging
 import os
+from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
+
+# 延迟导入各后端，避免缺少依赖时报错
+_backend_modules = {}
+for _name in ['backend_openai', 'backend_anthropic', 'backend_openrouter', 'backend_gemini']:
+    try:
+        _backend_modules[_name] = __import__(f'evolution.backend.{_name}', fromlist=[_name])
+    except ImportError:
+        pass
+
+backend_openai = _backend_modules.get('backend_openai')
+backend_anthropic = _backend_modules.get('backend_anthropic')
+backend_openrouter = _backend_modules.get('backend_openrouter')
+backend_gemini = _backend_modules.get('backend_gemini')
 
 logger = logging.getLogger("evolution")
 
@@ -26,12 +38,15 @@ def determine_provider(model: str) -> str:
         return "openrouter"
 
 
-provider_to_query_func = {
-    "openai": backend_openai.query,
-    "anthropic": backend_anthropic.query,
-    "openrouter": backend_openrouter.query,
-    "gemini": backend_gemini.query,
-}
+provider_to_query_func = {}
+if backend_openai:
+    provider_to_query_func["openai"] = backend_openai.query
+if backend_anthropic:
+    provider_to_query_func["anthropic"] = backend_anthropic.query
+if backend_openrouter:
+    provider_to_query_func["openrouter"] = backend_openrouter.query
+if backend_gemini:
+    provider_to_query_func["gemini"] = backend_gemini.query
 
 
 def query(
