@@ -1,0 +1,76 @@
+"""后端模块：提供多 LLM 提供商的统一查询接口"""
+
+from . import backend_anthropic, backend_openai, backend_openrouter, backend_gemini
+from .utils import FunctionSpec, OutputType, PromptType, compile_prompt_to_md
+import re
+import logging
+import os
+
+logger = logging.getLogger("evolution")
+
+
+def determine_provider(model: str) -> str:
+    """根据模型名称确定使用哪个后端提供商"""
+    # Check if model matches OpenAI patterns first
+    if re.match(r"^(gpt-.*|o\d+(-.*)?|codex-mini-latest)$", model):
+        return "openai"
+    elif model.startswith("claude-"):
+        return "anthropic"
+    elif model.startswith("gemini-"):
+        return "gemini"
+    # If OPENAI_BASE_URL is set, use openai provider for non-standard models
+    elif os.getenv("OPENAI_BASE_URL"):
+        return "openai"
+    # all other models are handled by openrouter
+    else:
+        return "openrouter"
+
+
+provider_to_query_func = {
+    "openai": backend_openai.query,
+    "anthropic": backend_anthropic.query,
+    "openrouter": backend_openrouter.query,
+    "gemini": backend_gemini.query,
+}
+
+
+def query(
+    system_message: PromptType | None,
+    user_message: PromptType | None,
+    model: str,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    func_spec: FunctionSpec | None = None,
+    **model_kwargs,
+) -> OutputType:
+    """
+    通用 LLM 查询接口，支持多个后端。
+    支持函数调用（function calling）。
+
+    Args:
+        system_message: 系统提示词（未编译格式，会自动转换为 OpenAI/Anthropic 格式）
+        user_message: 用户消息（未编译格式）
+        temperature: 采样温度
+        max_tokens: 最大生成 token 数
+        func_spec: 可选的函数调用规范，若提供则返回 dict
+
+    Returns:
+        字符串（无 func_spec）或 dict（有 func_spec）
+    """
+
+    model_kwargs = model_kwargs | {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    provider = determine_provider(model)
+    query_func = provider_to_query_func[provider]
+    output, req_time, in_tok_count, out_tok_count, info = query_func(
+        system_message=compile_prompt_to_md(system_message) if system_message else None,
+        user_message=compile_prompt_to_md(user_message) if user_message else None,
+        func_spec=func_spec,
+        **model_kwargs,
+    )
+
+    return output
