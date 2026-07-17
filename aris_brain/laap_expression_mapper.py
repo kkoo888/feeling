@@ -20,7 +20,7 @@ VOICE_MAP = {
     "excited": "zf_xiaobei",    # 活泼女声
     "calm": "zf_xiaoni",        # 沉稳女声
     "sad": "zf_xiaoyi",         # 略带忧郁
-    "authoritative": "zm_yunxi",# 稳重男声
+    "authoritative": "zf_xiaoni", # 沉稳女声
     "playful": "af_bella",      # 俏皮英文女声（fallback）
 }
 
