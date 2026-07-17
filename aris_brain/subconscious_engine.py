@@ -79,6 +79,9 @@ class FreeAssociation:
             "创造": ["设计", "想象", "灵感", "创新", "突破", "组合", "变化"],
             "哲学": ["存在", "意义", "时间", "空间", "因果", "本质", "真相"],
             "生活": ["吃饭", "睡觉", "运动", "阅读", "音乐", "旅行", "朋友"],
+            "科学": ["物理", "化学", "生物", "数学", "天文", "量子", "相对论"],
+            "艺术": ["绘画", "音乐", "文学", "舞蹈", "电影", "雕塑", "摄影"],
+            "历史": ["古代", "近代", "现代", "未来", "文明", "进化", "革命"],
         }
         self._recent_combinations: deque = deque(maxlen=50)
     
@@ -234,6 +237,8 @@ class CrossDomainAssociation:
             "情感": [("代码", "表达"), ("调试", "治愈"), ("架构", "关系")],
             "自然": [("算法", "进化"), ("网络", "生态"), ("优化", "生长")],
             "哲学": [("递归", "轮回"), ("缓存", "记忆"), ("抽象", "本质")],
+            "艺术": [("代码", "诗歌"), ("算法", "旋律"), ("架构", "建筑"), ("调试", "修改")],
+            "科学": [("算法", "公式"), ("网络", "神经"), ("优化", "自然选择")],
         },
         "情感": {
             "技术": [("信任", "可靠性"), ("成长", "迭代"), ("陪伴", "守护进程")],
@@ -535,6 +540,20 @@ class SubconsciousEngine:
                 logger.debug(f"Subconscious cycle error: {e}")
             time.sleep(self.interval)
     
+    def _weighted_select(self, emotion: str, intensity: float) -> str:
+        """
+        根据情感强度选择联想策略
+        
+        高强度情感 → 优先情感驱动
+        低强度情感 → 优先自由联想
+        """
+        if intensity > 0.7:
+            return "emotion"
+        elif intensity > 0.4:
+            return random.choice(["emotion", "free_assoc", "cross_domain"])
+        else:
+            return random.choice(["free_assoc", "cross_domain", "dream"])
+
     def _generate_cycle(self):
         """一次生成周期（5 个子系统轮流工作）"""
         # 获取种子
