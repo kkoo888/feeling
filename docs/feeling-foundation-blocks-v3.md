@@ -81,7 +81,7 @@ def attachment_type(anxiety: float, avoidance: float,
 
 ### 方块 82：信任度更新（Trust Update）
 
-**公式**: $T_{t+1} = T_t + \eta \cdot \Delta_t \cdot (1 - T_t) \cdot \mathbb{1}[\Delta_t > 0] + \eta \cdot \Delta_t \cdot T_t \cdot \mathbb{1}[\Delta_t < 0]$
+**公式**: $T_{t+1} = T_t + \eta \cdot \Delta_t \cdot (1 - T_t) \cdot \mathbb{1}[\Delta_t > 0] + 2\eta \cdot \Delta_t \cdot T_t \cdot \mathbb{1}[\Delta_t < 0]$
 
 其中 $\Delta_t = r_t - \hat{r}_t$ 为信任预测误差，$r_t$ 为实际行为可信度
 

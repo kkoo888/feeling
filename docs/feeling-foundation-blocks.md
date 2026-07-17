@@ -436,22 +436,40 @@ def phi_integration(module_entropies: Dict[str, float],
 ### 方块 19：复杂度（Lempel-Ziv）
 
 **含义**: 序列有多"复杂"
-**公式**: C_LZ = n / (log₂ n) （归一化后）
+**公式**: C_LZ = c(n) · log₂(n) / n（归一化后）
+其中 c(n) 为 LZ 解析产生的不同子串模式数量
 **取值**: 0（完全规律）→ 1（完全随机）
 **验证**: 周期序列复杂度低
 
 ```python
-def complexity_lz(sequence: str) -> float:
+def complexity_lz(binary_seq: str) -> float:
     """Lempel-Ziv 复杂度：衡量序列的复杂程度"""
-    n = len(sequence)
+    n = len(binary_seq)
     if n == 0:
         return 0.0
-    # 简化实现：计算不同子串数量
-    substrings = set()
-    for i in range(n):
-        for j in range(i + 1, n + 1):
-            substrings.add(sequence[i:j])
-    return len(substrings) / (n * (n + 1) / 2)
+    i, k, l = 0, 1, 1
+    c = 1
+    while True:
+        if i + k > n:
+            break
+        if binary_seq[i:i+k] == binary_seq[l:l+k]:
+            k += 1
+            if l + k > n:
+                c += 1
+                break
+        else:
+            i += 1
+            if i == l:
+                c += 1
+                l += k
+                if l + 1 > n:
+                    break
+                i = 0
+                k = 1
+                l += 1
+            else:
+                k = 1
+    return c * np.log2(n) / n if n > 0 else 0
 ```
 
 **feeling 中的应用**:
@@ -483,7 +501,7 @@ def complexity_lz(sequence: str) -> float:
 | 16 | 遗忘曲线 | R = e^(-t/S) | 记忆衰减 |
 | 17 | 余弦相似度 | cos(θ) = A·B/\|A\|\|B\| | 记忆检索 |
 | 18 | 整合信息 Φ | ΣI - ΣH | 意识度量 |
-| 19 | LZ 复杂度 | C = n/log₂n | 涌现检测 |
+| 19 | LZ 复杂度 | C = c(n)·log₂n/n | 涌现检测 |
 
 ---
 
