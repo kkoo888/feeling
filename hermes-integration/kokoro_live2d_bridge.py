@@ -6,7 +6,7 @@ cognitive state. It is a standalone example; integrate it into wiky-body
 or your VTuber pipeline as needed.
 
 Prerequisites:
-  - LAAP API running on http://localhost:11546
+  - LAAP API running on http://localhost:11530
   - Kokoro-FastAPI running (default http://localhost:8880)
   - wiky-body Live2D runtime reachable via HTTP/WebSocket
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import requests
 
-LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11546")
+LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11530")
 KOKORO_BASE = os.environ.get("KOKORO_BASE", "http://localhost:8880")
 LIVE2D_BASE = os.environ.get("LIVE2D_BASE", "http://localhost:7860")  # Gradio/HTTP bridge
 

@@ -41,7 +41,7 @@ if str(LAAP_BRAIN / "psi_jspace_bridge") not in sys.path:
 import requests
 from mcp.server.fastmcp import FastMCP
 
-LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11546")
+LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11530")
 
 mcp = FastMCP("laap-brain", host="0.0.0.0", port=11550)
 

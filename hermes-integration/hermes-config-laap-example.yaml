@@ -18,7 +18,7 @@ mcp_servers:
     args:
       - "<LAAP_ROOT>\\mcp_server\\laap_mcp_server.py"
     env:
-      LAAP_API_BASE: "http://localhost:11546"
+      LAAP_API_BASE: "http://localhost:11530"
     timeout: 30
     connect_timeout: 10
     keepalive_interval: 60
@@ -36,4 +36,4 @@ skills:
 
 # Optional: source-level integration env var
 # Set this in your shell or in Hermes's .env file:
-# LAAP_API_BASE=http://localhost:11546
+# LAAP_API_BASE=http://localhost:11530

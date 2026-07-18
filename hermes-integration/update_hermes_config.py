@@ -13,7 +13,7 @@ LAAP_ROOT = Path(os.environ.get(
     "LAAP_ROOT",
     str(Path(__file__).resolve().parent.parent)
 ))
-LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11546")
+LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11530")
 HERMES_VENV_PYTHON = os.environ.get(
     "HERMES_VENV_PYTHON",
     str(Path.home() / ".hermes" / "hermes-agent" / ".venv" / "Scripts" / "python.exe")
