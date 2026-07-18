@@ -3,7 +3,7 @@ memory_bridge.py — Hindsight 记忆桥接器
 ========================================
 只做一件事：从 Hindsight 召回记忆，供 LAAP 各模块读取。
 
-对接：Hindsight API http://127.0.0.1:6200
+对接：Hindsight API http://127.0.0.1:6100
 Bank：hermes
 """
 
@@ -14,19 +14,40 @@ import requests
 
 logger = logging.getLogger("laap.memory_bridge")
 
-HINDSIGHT_BASE = "http://127.0.0.1:6200"
+HINDSIGHT_BASE = "http://127.0.0.1:6100"
 BANK_ID = "hermes"
 TIMEOUT = 10
 
 
 def _recall(query: str, limit: int = 5) -> List[Dict]:
-    """调 Hindsight recall API"""
+    """
+    调 Hindsight recall API。
+
+    Hindsight RecallRequest schema:
+      - query (必填, str)
+      - max_tokens (int, 默认 4096) — 控制 token 预算，间接决定结果数量
+      - budget: "low" | "mid" | "high" (默认 "mid")
+      - types: ["world", "experience", "observation"] 等
+      - trace (bool, 默认 False)
+    注意：schema 没有 `limit` 字段。老代码发 {"limit": ...} 会触发 422。
+    `limit` 参数保留仅用于本地截断，不发送给 Hindsight。
+    """
     url = f"{HINDSIGHT_BASE}/v1/default/banks/{BANK_ID}/memories/recall"
     try:
-        resp = requests.post(url, json={"query": query, "limit": limit}, timeout=TIMEOUT)
+        # Hindsight 用 token 预算控制结果量，没有 limit 字段
+        # 把 limit 映射到大致的 max_tokens (每条结果 ~500 tokens)
+        max_tokens = max(500, int(limit) * 500)
+        payload = {"query": query, "max_tokens": max_tokens, "trace": True}
+        resp = requests.post(url, json=payload, timeout=TIMEOUT)
         resp.raise_for_status()
-        memories = resp.json().get("memories", [])
-        return [{"content": m.get("content", ""), "score": m.get("score", 0), "type": m.get("type", "unknown")} for m in memories if m.get("content")]
+        # RecallResponse: {results: [...], trace: {...}, entities: {...}, chunks: {...}}
+        results = resp.json().get("results", [])
+        # RecallResult 每项含 id/text/type/entities/context/occurred_start/...
+        return [
+            {"content": r.get("text", ""), "score": 0.0, "type": r.get("type", "unknown")}
+            for r in results
+            if r.get("text")
+        ][:limit]  # 本地按 limit 截断
     except requests.exceptions.ConnectionError:
         logger.warning("Hindsight 连接失败")
         return []
