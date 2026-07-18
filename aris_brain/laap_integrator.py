@@ -299,12 +299,12 @@ class LaapIntegrator:
         """加载三层记忆系统"""
         try:
             from memory_store import MemoryStore
-            from memory_bridge import get_memory_context, recall_related, store_important
+            from memory_bridge import get_memory_context, recall_related
             store = MemoryStore()
             stats = store.get_stats()
             self.modules["memory"] = {
                 "store": store,
-                "bridge": (get_memory_context, recall_related, store_important),
+                "bridge": (get_memory_context, recall_related),
             }
             logger.info(f"📚 记忆: {stats['total']}条 ({stats['core']}核心/{stats['episodic']}情景/{stats['working']}工作)")
             return True

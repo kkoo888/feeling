@@ -51,10 +51,6 @@ def recall_related(query: str, top_k: int = 5) -> List[Dict]:
     return _recall(query, limit=top_k)
 
 
-def store_important(content: str, tags: List[str] = None, mentioned_at: str = None) -> bool:
-    """占位 — 保持接口兼容，实际不做任何事"""
-    return True
-
 
 def is_available() -> bool:
     """检查 Hindsight 是否可用"""
