@@ -18,7 +18,7 @@
   - 潜意识不直接对话，只生成关联
   - 高相关性直觉会被提升到意识层（注入 PSI 上下文）
   - LLM 仍然是语言输出通道，但会受到潜意识的影响
-  - 无需外部 V12.5 或 emotional_engine，纯 Python 自含运行
+  - 无需外部 emotional_engine，纯 Python V2 自含运行
 """
 
 import logging
