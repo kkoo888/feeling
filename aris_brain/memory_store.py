@@ -67,14 +67,7 @@ class MemoryStore:
         self._local_cache[layer].append(fragment)
         self._total_store += 1
 
-        # 同步到 Hindsight
-        if self._hindsight_ok:
-            try:
-                from memory_bridge import store_important
-                tags = [layer] + fragment.topics[:3]
-                store_important(fragment.content, tags=tags)
-            except Exception as e:
-                logger.debug(f"Hindsight 存储失败: {e}")
+        # 同步到 Hindsight（占位，实际由 Hindsight 自己处理）
 
         # 工作记忆只保留最近 20 条
         if len(self._local_cache["working"]) > 20:
