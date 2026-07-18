@@ -8,7 +8,7 @@ Run in stdio mode (default, for Hermes mcp_servers):
     python mcp_server/laap_mcp_server.py
 
 Run in SSE mode:
-    python mcp_server/laap_mcp_server.py --sse --port 11547
+    python mcp_server/laap_mcp_server.py --sse --port 11550
 
 Tools:
     laap_cognitive_state  - get PSI cognitive state for a user input
@@ -43,7 +43,7 @@ from mcp.server.fastmcp import FastMCP
 
 LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11546")
 
-mcp = FastMCP("laap-brain")
+mcp = FastMCP("laap-brain", host="0.0.0.0", port=11550)
 
 
 def _laap_post(endpoint: str, payload: dict) -> dict:
@@ -375,10 +375,13 @@ def evolution_report() -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LAAP Brain MCP Server")
     parser.add_argument("--sse", action="store_true", help="Run in SSE mode")
-    parser.add_argument("--port", type=int, default=11547, help="SSE port")
+    parser.add_argument("--port", type=int, default=11550, help="SSE port")
     args = parser.parse_args()
 
+    if args.port != 11550:
+        mcp.settings.port = args.port
+
     if args.sse:
-        mcp.run(transport="sse", port=args.port)
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")
