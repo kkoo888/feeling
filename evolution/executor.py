@@ -18,11 +18,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
+import os
+
 import requests
 
 logger = logging.getLogger("evolution.executor")
 
-LAAP_API_BASE = "http://localhost:11546"
+# LAAP API 基址：优先读 env，默认 :11530（与项目其他模块统一）
+LAAP_API_BASE = os.environ.get("LAAP_API_BASE", "http://localhost:11530")
 
 
 @dataclass

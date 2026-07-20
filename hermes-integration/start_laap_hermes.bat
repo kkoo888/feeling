@@ -6,7 +6,7 @@ setlocal EnableDelayedExpansion
 :: Usage: start_laap_hermes.bat [port]
 
 set LAAP_PORT=%1
-if "%LAAP_PORT%"=="" set LAAP_PORT=11546
+if "%LAAP_PORT%"=="" set LAAP_PORT=11530
 
 :: Auto-detect LAAP root from this batch file's location.
 :: Override by setting LAAP_ROOT before running this script.
