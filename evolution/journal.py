@@ -90,6 +90,22 @@ class EvolutionNode(DataClassJsonMixin):
     def __hash__(self):
         return hash(self.id)
 
+    def to_dict(self) -> dict:
+        """序列化时避免循环引用 — parent/children 只存 ID。"""
+        d = {}
+        for k, v in self.__dict__.items():
+            if k == 'parent':
+                d[k] = v.id if v is not None else None
+            elif k == 'children':
+                d[k] = [c.id for c in v]
+            elif k == 'metric' and v is not None:
+                d[k] = v.value if hasattr(v, 'value') else v
+            elif k == 'multi_metric' and v is not None:
+                d[k] = v.composite_score if hasattr(v, 'composite_score') else v
+            else:
+                d[k] = v
+        return d
+
     @property
     def debug_depth(self) -> int:
         """
@@ -123,6 +139,17 @@ class EvolutionJournal(DataClassJsonMixin):
         """追加新节点到日志"""
         node.step = len(self.nodes)
         self.nodes.append(node)
+
+    def to_json(self, **kwargs) -> str:
+        """序列化 — 使用自定义 to_dict 避免循环引用。"""
+        import json as _json
+        return _json.dumps(self.to_dict(), ensure_ascii=False, indent=2, default=str)
+
+    def to_dict(self) -> dict:
+        """序列化 — 节点用自定义 to_dict。"""
+        return {
+            'nodes': [n.to_dict() for n in self.nodes],
+        }
 
     @property
     def draft_nodes(self) -> list[EvolutionNode]:
