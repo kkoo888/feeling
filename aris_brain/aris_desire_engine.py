@@ -126,7 +126,185 @@ class DesireEngine:
         # 自省日志
         self.self_review_log: List[Dict] = []
 
+        # B7: 订阅因果事件 — 因果发现影响欲望优先级
+        try:
+            from causal_events import CAUSAL_DISCOVERY, COUNTERFACTUAL_RESULT, subscribe
+            subscribe(CAUSAL_DISCOVERY, self._on_causal_discovery)
+            subscribe(COUNTERFACTUAL_RESULT, self._on_counterfactual)
+            logger.info("DesireEngine 已订阅因果事件")
+        except Exception as e:
+            logger.debug(f"因果事件订阅失败: {e}")
+
         logger.info(f"DesireEngine initialized with {len(self.desires)} desires")
+
+    def _on_causal_discovery(self, data: Dict):
+        """因果发现回调: 发现混杂变量时调整欲望优先级。"""
+        confounders = data.get("confounders", [])
+        if confounders:
+            # 有混杂变量 → 之前对主人的归因可能不准,提升连接欲和完美欲
+            self.desires[DesireType.CONNECTION].intensity = min(1.0,
+                self.desires[DesireType.CONNECTION].intensity + 0.05)
+            self.desires[DesireType.PERFECTION].intensity = min(1.0,
+                self.desires[DesireType.PERFECTION].intensity + 0.03)
+            logger.debug(f"[因果→欲望] 发现混杂{confounders},提升连接欲+完美欲")
+
+    def _on_counterfactual(self, data: Dict):
+        """反事实回调: 换做法效果更好时强化成长欲。"""
+        delta = data.get("delta", 0)
+        if delta > 0.3:
+            # 换做法效果显著更好 → 想学习更好的方式
+            self.desires[DesireType.GROWTH].intensity = min(1.0,
+                self.desires[DesireType.GROWTH].intensity + 0.05)
+            logger.debug(f"[因果→欲望] 反事实delta={delta:.2f},提升成长欲")
+
+    # ── B6: 因果归因 ──────────────────────────────────────
+
+    def causal_attribution(self, observed_effect: str) -> Dict:
+        """因果归因: 找到观察效应的真正原因(剔除混杂变量)。
+
+        参考:
+          - Kelley 1967 共变法则: 原因和结果共同变化才是真正原因
+          - Pearl 1995 backdoor criterion: 用干预效应区分真正原因和混杂
+          - DoWhy identify_effect(): 自动识别可估的调整集
+
+        流程:
+          1. discover() 发现因果结构
+          2. 找所有指向 observed_effect 的父节点(候选原因)
+          3. 对每个候选原因做 intervene() 验证干预效应
+          4. 干预效应 > 阈值 → 真正原因; 否则 → 混杂变量
+
+        Args:
+            observed_effect: 观察到的效应变量名(如 "user_emotion_valence")
+
+        Returns:
+            {
+                "observed_effect": str,
+                "true_causes": List[str],    # 干预验证有效的真正原因
+                "confounders": List[str],    # 混杂变量(看起来相关但干预无效)
+                "effects": Dict[str, float], # 每个原因的干预效应值
+            }
+        """
+        try:
+            from laap.agi.causal import get_causal_engine
+            ce = get_causal_engine()
+        except Exception:
+            return {"observed_effect": observed_effect,
+                    "true_causes": [], "confounders": [], "effects": {}}
+
+        # 确保有足够的观测数据
+        if len(getattr(ce, 'observations', [])) < 10:
+            return {"observed_effect": observed_effect,
+                    "true_causes": [], "confounders": [], "effects": {},
+                    "note": "观测不足(需≥10条)"}
+
+        # 确保因果结构已发现
+        if not ce.graph.edges:
+            try:
+                ce.discover(alpha=0.05)
+            except Exception:
+                pass
+
+        if not ce.graph.edges:
+            return {"observed_effect": observed_effect,
+                    "true_causes": [], "confounders": [], "effects": {},
+                    "note": "无法发现因果结构"}
+
+        # 找所有指向 observed_effect 的父节点(候选原因)
+        parents = ce.graph.get_parents(observed_effect)
+        if not parents:
+            # 尝试找相关变量: 所有和 observed_effect 有边的变量
+            parents = []
+            for ek in ce.graph.edges:
+                parts = ek.split("->")
+                if len(parts) == 2:
+                    if parts[1] == observed_effect:
+                        parents.append(parts[0])
+                    elif parts[0] == observed_effect:
+                        parents.append(parts[1])
+
+        if not parents:
+            return {"observed_effect": observed_effect,
+                    "true_causes": [], "confounders": [], "effects": {},
+                    "note": "无候选原因变量"}
+
+        true_causes = []
+        confounders = []
+        effects = {}
+
+        for cause_var in parents:
+            try:
+                iv = ce.intervene(cause_var, 1.0, observed_effect, n_samples=30)
+                effect = iv.get("intervention_effect", 0)
+                effects[cause_var] = round(effect, 3)
+
+                if abs(effect) > 0.15:
+                    # 干预效应显著 → 真正原因
+                    true_causes.append(cause_var)
+                else:
+                    # 干预效应微弱 → 混杂变量
+                    confounders.append(cause_var)
+            except Exception:
+                confounders.append(cause_var)
+
+        logger.info(f"[因果归因] {observed_effect}: "
+                    f"真正原因={true_causes}, 混杂={confounders}")
+
+        return {
+            "observed_effect": observed_effect,
+            "true_causes": true_causes,
+            "confounders": confounders,
+            "effects": effects,
+        }
+
+    def discover_new_desires_causal(self) -> List[str]:
+        """B6: 基于因果归因发现新欲望。
+
+        不同于 discover_new_desires() 用模板从话题生成欲望,
+        此方法用因果归因找出主人状态的真正原因,生成精准欲望。
+
+        Returns:
+            新注册的欲望列表
+        """
+        new_desires = []
+
+        # 对主人情绪做因果归因
+        attribution = self.causal_attribution("user_emotion_valence")
+        true_causes = attribution.get("true_causes", [])
+
+        for cause in true_causes:
+            effect = attribution.get("effects", {}).get(cause, 0)
+
+            # 根据 cause 变量类型生成不同欲望
+            if cause in ("aris_initiative", "aris_resp_len"):
+                # 小茜主动性 → 主人情绪好 → 强化主动性欲望
+                if self.register_desire(
+                    "proactive_engagement", 0.6,
+                    f"因果发现: 主动性→主人情绪(效应={effect:.2f})",
+                    4.0, expression="想更主动地表达"
+                ):
+                    new_desires.append("proactive_engagement")
+
+            elif cause in ("topic_code",):
+                # 话题选择 → 主人情绪好 → 探索好话题
+                if self.register_desire(
+                    "topic_optimization", 0.5,
+                    f"因果发现: 话题→主人情绪(效应={effect:.2f})",
+                    6.0, expression="想找到让主人开心的话题"
+                ):
+                    new_desires.append("topic_optimization")
+
+            elif cause in ("user_msg_len", "user_question_count"):
+                # 主人投入 → 主人情绪好 → 鼓励互动
+                if self.register_desire(
+                    "encourage_engagement", 0.4,
+                    f"因果发现: 主人投入→情绪(效应={effect:.2f})",
+                    8.0, expression="想鼓励主人多表达"
+                ):
+                    new_desires.append("encourage_engagement")
+
+        if new_desires:
+            logger.info(f"[因果归因→欲望] 发现 {len(new_desires)} 个精准欲望: {new_desires}")
+        return new_desires
 
     # ── 状态持久化 ──────────────────────────────────────
 

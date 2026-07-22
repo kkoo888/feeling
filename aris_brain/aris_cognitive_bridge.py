@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 # ── 路径 ────────────────────────────────────────────────────
-from laap_brain.config import BRAIN_DIR as BRAIN_ROOT, LAAP_ROOT
+from laap_brain.config import BRAIN_DIR as BRAIN_ROOT, LAAP_ROOT, STATE_DIR
 
 from memory_bridge import get_memory_context, recall_related
 from memory_store import MemoryStore, MemoryFragment
@@ -397,9 +397,13 @@ class 小茜CognitiveBridge:
             logger.info(f"WorldModel unavailable: {e}")
 
         try:
-            from laap.agi.causal import UnifiedCausalEngine
-            self._laap_modules["causal"] = UnifiedCausalEngine()
-            logger.info("CausalEngine loaded")
+            from laap.agi.causal import get_causal_engine
+            _causal_path = str(STATE_DIR / "causal_graph.json")
+            self._laap_modules["causal"] = get_causal_engine(
+                quantum_dim=64, name="小茜Causal",
+                persist_path=_causal_path,
+            )
+            logger.info("CausalEngine loaded (singleton)")
         except Exception as e:
             logger.info(f"CausalEngine unavailable: {e}")
 
@@ -434,6 +438,15 @@ class 小茜CognitiveBridge:
             logger.info("SafetyEngine loaded")
         except Exception as e:
             logger.info(f"SafetyEngine unavailable: {e}")
+
+        # A4: 因果引擎注入给 GoalEngine,让目标评估能用因果效应
+        if "causal" in self._laap_modules:
+            try:
+                from aris_goal_engine import register_causal_engine
+                register_causal_engine(self._laap_modules["causal"])
+                logger.info("因果引擎已注入 GoalEngine ✓")
+            except Exception as e:
+                logger.debug(f"GoalEngine 因果注入失败: {e}")
 
     def _init_emotion_engine(self):
         """初始化情感引擎"""
@@ -680,9 +693,59 @@ class 小茜CognitiveBridge:
         if self._laap_available and "causal" in self._laap_modules:
             try:
                 ce = self._laap_modules["causal"]
+
+                # B5: 用因果变量提取器替代硬编码 observe
+                # 从对话中提取 14 个数值化因果变量(treatment/outcome/confounder/mediator/state)
+                from causal_feature_extractor import extract_causal_observation
+                _obs = extract_causal_observation(
+                    user_message=message,
+                    aris_response=response,
+                    state={
+                        "needs_relatedness": self.state.needs_relatedness,
+                        "self_presence": self.state.self_presence,
+                    },
+                )
+                ce.observe(_obs)
+
                 # 学习"我说了什么" → "主人如何回应" 的因果链
-                ce.learn_bond("aris_said", self._last_topics[0] if hasattr(self, '_last_topics') and self._last_topics else "conversation",
-                              effect="主人_responded", matched=True, domain="social")
+                _topic_code = _obs.get("topic_code", 8.0)
+                _resp_len = _obs.get("aris_resp_len", 0)
+                _user_msg_len = _obs.get("user_msg_len", 0)
+
+                # A5+B5: 反事实复盘 — 用提取的数值化变量
+                # 如果小茜主动性不同, 主人回应长度会怎样变化
+                if hasattr(ce, 'counterfactual') and _resp_len > 0:
+                    try:
+                        _observed_initiative = _obs.get("aris_initiative", 0)
+                        _cf_initiative = _observed_initiative + 1.0  # 假设多一次主动建议
+                        cf = ce.counterfactual(
+                            observed_x=_observed_initiative,
+                            observed_y=_user_msg_len,
+                            counterfactual_x=_cf_initiative,
+                            cause_var="aris_initiative",
+                            effect_var="user_msg_len",
+                        )
+                        if cf and cf.get("delta", 0) != 0:
+                            logger.debug(f"[因果] 反事实: 多一次主动建议, "
+                                         f"主人回应变化 delta={cf['delta']:.1f}")
+                            # B7: 广播反事实结果事件
+                            try:
+                                from causal_events import emit_counterfactual
+                                emit_counterfactual(
+                                    delta=cf["delta"],
+                                    cause_var="aris_initiative",
+                                    effect_var="user_msg_len",
+                                    observed_y=_user_msg_len,
+                                    cf_y=cf.get("counterfactual_y"),
+                                )
+                            except Exception:
+                                pass  # 事件广播失败不阻塞对话
+                    except Exception as cf_e:
+                        logger.debug(f"反事实复盘失败: {cf_e}")
+
+                # 持久化因果图
+                if hasattr(ce, 'save'):
+                    ce.save()
             except Exception as e:
                 logger.debug(f"操作失败: {e}")
         if self.state.cycle_count % 10 == 0:
@@ -1052,6 +1115,81 @@ class 小茜CognitiveBridge:
 
         return f"[我的注意力: {self.state.focus.value}] [需求: 能力={self.state.needs_competence:.1f} 自主={self.state.needs_autonomy:.1f} 关系={self.state.needs_relatedness:.1f}]"
 
+    def _causal_action_select(self, ce) -> Optional[Dict]:
+        """B4: 因果行动选择 — 用因果图指导小茜下一步行为。
+
+        参考:
+          - Causal Bandits (Lattimore et al. 2016): 用因果图选择
+            干预效应最大的 action, 利用已知的因果路径信息
+          - CORE (Sauter et al. 2024): 用 RL agent 联合优化
+            因果发现 + action 选择
+
+        算法:
+          1. 从因果图中找所有 treatment 变量(小茜可干预的)
+          2. 对每个 treatment, 查它的后代中是否有 outcome 变量
+          3. 对每条 treatment→outcome 路径调 intervene() 估计效应
+          4. 选效应最大的 action
+
+        Returns:
+            {
+                "variable": str,      # 干预变量
+                "action": str,        # 行动描述
+                "effect": float,     # 预期因果效应
+                "target": str,        # 目标变量
+                "path": str,          # 因果路径描述
+            }
+            或 None
+        """
+        from causal_feature_extractor import get_variable_roles
+        roles = get_variable_roles()
+        treatments = roles.get("treatment", [])
+        outcomes = roles.get("outcome", [])
+
+        if not treatments or not outcomes:
+            return None
+
+        best_action = None
+        best_effect = 0.0
+
+        for t_var in treatments:
+            # 查 t_var 在因果图中的后代(它能影响的变量)
+            descendants = ce.graph.get_descendants(t_var)
+
+            for o_var in outcomes:
+                # o_var 必须是 t_var 的后代才有因果路径
+                if o_var not in descendants and o_var != t_var:
+                    # 也检查直接边
+                    if f"{t_var}->{o_var}" not in ce.graph.edges:
+                        continue
+
+                # 估计干预效应
+                try:
+                    iv = ce.intervene(t_var, 1.0, o_var, n_samples=30)
+                    effect = iv.get("intervention_effect", 0)
+                except Exception:
+                    continue
+
+                if abs(effect) > abs(best_effect):
+                    best_effect = effect
+                    best_action = {
+                        "variable": t_var,
+                        "action": self._action_desc(t_var, effect),
+                        "effect": effect,
+                        "target": o_var,
+                        "path": f"{t_var}→{o_var}",
+                    }
+
+        return best_action
+
+    def _action_desc(self, var: str, effect: float) -> str:
+        """把因果变量名转为自然语言行动描述。"""
+        desc_map = {
+            "aris_initiative": ("提高主动性" if effect > 0 else "降低主动性"),
+            "aris_resp_len": ("增加回应长度" if effect > 0 else "缩短回应"),
+            "topic_code": ("优化话题选择" if effect > 0 else "避免当前话题"),
+        }
+        return desc_map.get(var, f"调整 {var}")
+
     def _run_agi_tick(self):
         """
         AGI 周期性心跳 — 每5分钟运行一次。
@@ -1072,18 +1210,135 @@ class 小茜CognitiveBridge:
 
         tick_log = []
 
-        # 因果引擎：自动发现传递链
+        # 因果引擎：自动发现 + 传递链 + 中介分析 + 事件广播
         if "causal" in self._laap_modules:
             try:
                 ce = self._laap_modules["causal"]
+                from causal_events import (emit_discovery, emit_counterfactual,
+                                           emit_mediation, emit_transitive_chain)
+
+                # A3: 因果发现 — 积累足够观测后自动发现因果结构
+                if hasattr(ce, 'discover') and len(ce.observations) >= 10:
+                    try:
+                        disc = ce.discover(alpha=0.05)
+                        n_edges = disc.get("edges_discovered", 0)
+                        if n_edges > 0:
+                            tick_log.append(f"因果发现: {n_edges}条边, "
+                                            f"混杂{len(disc.get('confounders', []))}个")
+                            # B7: 广播因果发现事件
+                            emit_discovery(
+                                edges_count=n_edges,
+                                confounders=disc.get("confounders", []),
+                                edges=list(ce.graph.edges.keys()),
+                                details=disc,
+                            )
+                    except Exception as disc_e:
+                        logger.debug(f"因果发现失败: {disc_e}")
+
+                # A7: 传递链发现 + 结果回流
                 if hasattr(ce, 'detect_transitive_chains'):
                     chains = ce.detect_transitive_chains()
                     if chains:
                         tick_log.append(f"因果: 发现{len(chains)}条传递链")
+                        # 回流到情景记忆供后续检索
+                        try:
+                            from aris_episodic_memory import get_memory
+                            mem = get_memory()
+                            for ch in chains[:3]:
+                                path_str = " → ".join(ch.get("path", []))
+                                # B3: 用 save_with_causal 带因果标注
+                                _has_save_causal = hasattr(mem, 'save_with_causal')
+                                if _has_save_causal:
+                                    mem.save_with_causal(
+                                        user_input=f"[因果传递链] {path_str}",
+                                        intent="causal_chain",
+                                        rule="transitive_discovery",
+                                        output=path_str,
+                                        success=True,
+                                        causal_analysis={
+                                            "causal_path": path_str,
+                                            "observed_effect": ch.get("confidence", 0),
+                                            "confounders": list(getattr(ce, '_confounders', [])),
+                                        },
+                                    )
+                                else:
+                                    mem.save_episode(
+                                        user_input=f"[因果传递链] {path_str}",
+                                        intent="causal_chain",
+                                        rule="transitive_discovery",
+                                        output=path_str,
+                                        success=True,
+                                    )
+                                # B7: 广播传递链事件
+                                emit_transitive_chain(
+                                    path=ch.get("path", []),
+                                    confidence=ch.get("confidence", 0),
+                                )
+                        except Exception:
+                            pass  # 记忆系统不可用时不阻塞
+
+                # A6: 中介分析 — 发现因果结构后分解直接/间接效应
+                if hasattr(ce, 'mediate') and len(ce.graph.edges) >= 2:
+                    try:
+                        # 找第一条有中介路径的边: X→M→Y
+                        edge_keys = list(ce.graph.edges.keys())
+                        for ek in edge_keys:
+                            parts = ek.split("->")
+                            if len(parts) != 2:
+                                continue
+                            x, y = parts
+                            # 找中介: X→M 且 M→Y
+                            for ek2 in edge_keys:
+                                parts2 = ek2.split("->")
+                                if (len(parts2) == 2 and parts2[0] == x
+                                        and parts2[1] != y):
+                                    m = parts2[1]
+                                    if f"{m}->{y}" in ce.graph.edges:
+                                        med = ce.mediate(x, m, y)
+                                        nde = med.get("direct_effect", 0)
+                                        nie = med.get("indirect_effect", 0)
+                                        if abs(nde) > 0.01 or abs(nie) > 0.01:
+                                            tick_log.append(
+                                                f"中介[{x}→{m}→{y}]: "
+                                                f"直接={nde:.2f} 间接={nie:.2f}")
+                                            # B7: 广播中介分解事件
+                                            emit_mediation(
+                                                direct_effect=nde,
+                                                indirect_effect=nie,
+                                                treatment=x, mediator=m, outcome=y,
+                                            )
+                                        break
+                    except Exception as med_e:
+                        logger.debug(f"中介分析失败: {med_e}")
+
                 if hasattr(ce, 'save'):
                     ce.save()
             except Exception as e:
                 tick_log.append(f"因果tick异常: {e}")
+
+        # B4: 因果行动选择 — 用因果图指导下一步行为
+        if "causal" in self._laap_modules:
+            try:
+                ce = self._laap_modules["causal"]
+                if len(ce.observations) >= 10 and ce.graph.edges:
+                    action = self._causal_action_select(ce)
+                    if action:
+                        tick_log.append(
+                            f"因果行动: {action['action']} "
+                            f"(效应={action['effect']:.2f}, "
+                            f"路径={action.get('path', '?')})")
+                        # 广播干预效应事件
+                        try:
+                            from causal_events import emit_intervention
+                            emit_intervention(
+                                effect=action["effect"],
+                                do_var=action["variable"],
+                                target_var=action["target"],
+                            )
+                        except Exception:
+                            pass
+            except Exception as e:
+                tick_log.append(f"因果行动选择异常: {e}")
 
         # 任务监督：自动推进活跃任务
         if self._ts_available and self._task_supervisor:

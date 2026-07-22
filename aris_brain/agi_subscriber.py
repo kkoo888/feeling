@@ -83,9 +83,14 @@ class AGISubscriber:
         self._init_modules()
 
     def _init_modules(self):
-        if _causal_available and _UnifiedCausalEngine is not None:
+        if _causal_available:
             try:
-                self.causal = _UnifiedCausalEngine(quantum_dim=64, name="小茜Causal")
+                from laap.agi.causal import get_causal_engine
+                _causal_path = str(STATE_DIR / "causal_graph.json")
+                self.causal = get_causal_engine(
+                    quantum_dim=64, name="小茜Causal",
+                    persist_path=_causal_path,
+                )
                 self.bus.register_module("causal_engine", version="1.0.0",
                     capabilities=["causal_inference", "counterfactual"])
                 logger.info("[AGI] 因果引擎就绪 ✓")

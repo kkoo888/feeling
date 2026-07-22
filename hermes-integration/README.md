@@ -27,7 +27,7 @@
 
 ```powershell
 cd D:\laap-AGI\aris_brain
-python laap_brain_api.py --port 11546
+python laap_brain_api.py --port 11530
 ```
 
 ### 2. 配置 Hermes MCP
@@ -49,14 +49,14 @@ hermes chat --skills laap-bridge
 ## 一键启动脚本
 
 ```powershell
-D:\laap-AGI\hermes-integration\start_laap_hermes.bat 11546
+D:\laap-AGI\hermes-integration\start_laap_hermes.bat 11530
 ```
 
 ## 源码级集成说明
 
 修改后的 `agent/system_prompt.py` 会在每次构建 system prompt 时：
 
-1. 读取环境变量 `LAAP_API_BASE`（默认 `http://localhost:11546`）
+1. 读取环境变量 `LAAP_API_BASE`（默认 `http://localhost:11530`）
 2. 调用 `POST /v1/cognitive_state` 获取 PSI 状态
 3. 把 preamble 注入到 volatile system prompt tier
 

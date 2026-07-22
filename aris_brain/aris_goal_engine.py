@@ -131,9 +131,14 @@ class GoalEngine:
         self.goal_history: List[Goal] = []
         self._lock = threading.Lock()
         self._cognitive_fn = cognitive_fn  # 外部认知更新回调 (integrator.cognitive_update_cycle)
+        self._causal_engine = None  # A4: 因果引擎引用(可选,由外部注入)
         self._load_state()
         logger.info(f"GoalEngine initialized — {len(self.goals)} pending, "
                     f"{len(self.goal_history)} completed in history")
+
+    def set_causal_engine(self, engine):
+        """注入因果引擎引用,供 evaluate() 做因果效应评分。"""
+        self._causal_engine = engine
 
     # ── 持久化 ──────────────────────────────────────────
 
@@ -457,6 +462,29 @@ class GoalEngine:
                 if existing.status == GoalStatus.IN_PROGRESS:
                     if existing.domain == goal.domain:
                         score *= 0.3  # 大幅降分
+
+            # A4/B2: 因果效应评分 — 延迟获取因果引擎单例
+            try:
+                from laap.agi.causal import get_causal_engine
+                _ce = get_causal_engine()
+            except Exception:
+                _ce = None
+            if _ce and hasattr(_ce, 'intervene') and len(getattr(_ce, 'observations', [])) >= 10:
+                try:
+                    # 尝试用干预效应评估目标价值
+                    # do_var=目标领域, do_value=1.0(执行), target=主人回应
+                    iv = _ce.intervene(
+                        goal.domain.value, 1.0, "主人_responded",
+                        n_samples=30,
+                    )
+                    effect = iv.get("intervention_effect", 0)
+                    # 因果效应 > 0 说明做这件事会正向影响主人,加分
+                    if effect > 0.1:
+                        score += min(20, effect * 10)  # 最多 +20
+                        logger.debug(f"[因果] 目标 '{goal.description[:30]}' "
+                                     f"干预效应={effect:.2f}, +{min(20, effect*10):.0f}分")
+                except Exception:
+                    pass  # 因果引擎不可用或变量不存在时静默跳过
 
             scored.append((goal, max(0, score)))
 
@@ -899,3 +927,8 @@ def get_goal_engine(cognitive_fn=None) -> GoalEngine:
     if _ENGINE is None:
         _ENGINE = GoalEngine(cognitive_fn=cognitive_fn)
     return _ENGINE
+
+def register_causal_engine(engine):
+    """向 GoalEngine 单例注入因果引擎(供 cognitive_bridge 启动后调用)。"""
+    ge = get_goal_engine()
+    ge.set_causal_engine(engine)

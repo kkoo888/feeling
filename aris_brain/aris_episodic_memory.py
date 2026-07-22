@@ -76,6 +76,39 @@ class EpisodicMemory:
         if len(self._episodes) % 10 == 0:
             self._save()
 
+    def save_with_causal(self, user_input: str, intent: str, rule: str,
+                         output: str, success: bool = True, latency_ms: float = 0,
+                         causal_analysis: Optional[Dict] = None):
+        """存一条带因果标注的对话案例。
+
+        B3: 在标准 episode 基础上扩展因果分析字段,
+        供 find_similar() 按因果路径检索。
+
+        Args:
+            causal_analysis: {
+                "observed_effect": float,        # 观察到的效应值
+                "counterfactual_delta": float,   # 反事实差值(换做法会怎样)
+                "causal_path": str,              # 因果路径如 "topic→emotion→resp_len"
+                "confounders": List[str],        # 识别出的混杂变量
+                "intervention_effect": float,    # 干预效应估计
+            }
+        """
+        episode = {
+            "id": hashlib.md5(f"{time.time()}{user_input}".encode()).hexdigest()[:12],
+            "timestamp": time.time(),
+            "user_input": user_input[:200],
+            "intent": intent,
+            "rule": rule,
+            "output": output[:500],
+            "success": success,
+            "latency_ms": round(latency_ms, 1),
+            "causal_analysis": causal_analysis or {},
+        }
+        self._episodes.append(episode)
+        self._stats["saved"] += 1
+        if len(self._episodes) % 10 == 0:
+            self._save()
+
     def find_similar(self, text: str, top_k: int = 3, threshold: float = 0.3) -> List[Dict]:
         """找与输入最相似的历史案例。
         

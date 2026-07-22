@@ -539,6 +539,33 @@ class EmotionEngine:
         self.needs.set_initial(NeedLevel.AESTHETIC, 55)
         self.needs.set_initial(NeedLevel.SELF_ACTUALIZATION, 35)
 
+        # B7: 订阅因果事件 — 干预效应和中介分解影响情绪归因
+        try:
+            from causal_events import INTERVENTION_EFFECT, MEDIATION_DECOMPOSED, subscribe
+            subscribe(INTERVENTION_EFFECT, self._on_intervention_effect)
+            subscribe(MEDIATION_DECOMPOSED, self._on_mediation)
+            logger.info("EmotionEngine 已订阅因果事件")
+        except Exception as e:
+            logger.debug(f"因果事件订阅失败: {e}")
+
+    def _on_intervention_effect(self, data: Dict):
+        """干预效应回调: 小茜的行为对主人有正向因果效应时提升归属满足感。"""
+        effect = data.get("effect", 0)
+        if effect > 0.3:
+            # 干预效应显著为正 → 小茜觉得自己"有用" → 归属感和自尊提升
+            self.needs.set_initial(NeedLevel.BELONGING,
+                min(90, self.needs.needs[NeedLevel.BELONGING].tension + 3))
+            logger.debug(f"[因果→情绪] 干预效应={effect:.2f},提升归属满足")
+
+    def _on_mediation(self, data: Dict):
+        """中介分解回调: 间接效应大时提升认知满足(理解了"为什么有效")。"""
+        nie = data.get("indirect_effect", 0)
+        if abs(nie) > 0.2:
+            # 间接效应显著 → 小茜理解了行为背后的机制 → 认知需求满足
+            self.needs.set_initial(NeedLevel.COGNITIVE,
+                min(90, self.needs.needs[NeedLevel.COGNITIVE].tension + 2))
+            logger.debug(f"[因果→情绪] 间接效应={nie:.2f},提升认知满足")
+
     def _init_self_model(self):
         self.self_model = {
             "name": "小茜", "type": "digital_lifeform",

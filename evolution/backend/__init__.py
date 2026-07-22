@@ -23,6 +23,9 @@ logger = logging.getLogger("evolution")
 
 def determine_provider(model: str) -> str:
     """根据模型名称确定使用哪个后端提供商"""
+    # 优先：如果显式启用 Trae 后端，直接走它
+    if os.getenv("EVOLUTION_BACKEND", "").lower() == "trae":
+        return "trae"
     # Check if model matches OpenAI patterns first
     if re.match(r"^(gpt-.*|o\d+(-.*)?|codex-mini-latest)$", model):
         return "openai"
@@ -47,6 +50,17 @@ if backend_openrouter:
     provider_to_query_func["openrouter"] = backend_openrouter.query
 if backend_gemini:
     provider_to_query_func["gemini"] = backend_gemini.query
+
+# Trae 后端：通过文件中转让 Trae 会话接管 LLM 调用
+# 通过环境变量 EVOLUTION_BACKEND=trae 启用
+backend_trae = None
+if os.getenv("EVOLUTION_BACKEND", "").lower() == "trae":
+    try:
+        backend_trae = __import__('evolution.backend.backend_trae', fromlist=['backend_trae'])
+        provider_to_query_func["trae"] = backend_trae.query
+        logger.info("Trae LLM 后端已启用（文件中转模式）")
+    except ImportError as e:
+        logger.warning(f"无法加载 Trae 后端: {e}")
 
 
 def query(

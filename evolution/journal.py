@@ -151,7 +151,12 @@ class EvolutionJournal(DataClassJsonMixin):
                 return None
         else:
             nodes = self.nodes
-        return max(nodes, key=lambda n: n.metric)
+        # FIX: 过滤掉 metric 为 None 的节点，避免 max 比较失败
+        scored = [n for n in nodes if n.metric is not None]
+        if not scored:
+            # 没有有指标的节点，返回最后一个（最新生成的）
+            return nodes[-1] if nodes else None
+        return max(scored, key=lambda n: n.metric)
 
     def generate_summary(self, include_strategy: bool = False) -> str:
         """生成日志摘要，供 Agent 参考"""
@@ -161,7 +166,8 @@ class EvolutionJournal(DataClassJsonMixin):
             if include_strategy:
                 summary_part += f"策略: {n.strategy}\n"
             summary_part += f"结果: {n.analysis}\n"
-            summary_part += f"验证指标: {n.metric.value}\n"
+            if n.metric is not None:
+                summary_part += f"验证指标: {n.metric.value}\n"
             if n.multi_metric is not None:
                 summary_part += f"多维评估: {n.multi_metric}\n"
             summary.append(summary_part)
