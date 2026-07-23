@@ -304,12 +304,12 @@ class 小茜CognitiveBridge:
                 logger.info(f"AutoLearner unavailable: {e}")
                 self._al_available = False
         
-        # ── CTM (Conscious Turing Machine) 世界模型处理器 ──
+        # ── CTM (Continuous Thought Machine) 持续思考引擎 ──
         self._ctm = None
         try:
-            from aris_ctm_processor import get_ctm_processor
-            self._ctm = get_ctm_processor()
-            logger.info("CTM World Processor loaded")
+            from laap.agi.ctm import ContinuousThoughtEngine
+            self._ctm = ContinuousThoughtEngine()
+            logger.info("CTM Engine loaded")
         except Exception as e:
             logger.info(f"CTM unavailable: {e}")
         
@@ -322,12 +322,12 @@ class 小茜CognitiveBridge:
         except Exception as e:
             logger.info(f"HAM unavailable: {e}")
         
-        # ── RetNet 三范式管线 ──
+        # ── RetNet 路由引擎 ──
         self._retnet = None
         try:
-            from aris_retnet_router import get_router
-            self._retnet = get_router()
-            logger.info("RetNet Triple Pipeline Router loaded")
+            from laap.agi.retnet_router import RetNetRouter
+            self._retnet = RetNetRouter()
+            logger.info("RetNet Router loaded")
         except Exception as e:
             logger.info(f"RetNet unavailable: {e}")
 
