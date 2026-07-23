@@ -65,3 +65,4 @@ _tmp*.py
 node_modules/
 psi_state.json
 audit_log.jsonl
+llm_config.yaml

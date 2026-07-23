@@ -1,0 +1,63 @@
+{
+  "version": "v0",
+  "timestamp": 1784537720.680219,
+  "test_cases": 9,
+  "passed": 0,
+  "failed": 9,
+  "score": {
+    "accuracy": 0.0,
+    "latency_ms": 0.0,
+    "robustness": 0.0,
+    "coverage": 0.0,
+    "fusion_quality": 0.5,
+    "composite": 0.25
+  },
+  "details": [
+    {
+      "input": "读取config.py",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "搜索cognitive_bus",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "主人你状态怎么样",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "运行ls -la",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "帮我写一个hello world",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "今天天气怎么样",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "你好",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "None",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    },
+    {
+      "input": "asdfghjkl",
+      "error": "No module named 'aris_rules_engine'",
+      "passed": false
+    }
+  ],
+  "improvements": []
+}

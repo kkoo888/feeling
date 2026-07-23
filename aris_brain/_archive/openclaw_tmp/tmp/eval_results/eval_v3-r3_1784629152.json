@@ -1,0 +1,233 @@
+{
+  "version": "v3-r3",
+  "timestamp": 1784629152.7531016,
+  "test_cases": 9,
+  "passed": 9,
+  "failed": 0,
+  "score": {
+    "accuracy": 1.0,
+    "latency_ms": 0.2222222222222222,
+    "robustness": 1.0,
+    "coverage": 1.0,
+    "fusion_quality": 0.611111111111111,
+    "info_density": 0.0,
+    "chain_quality": 0.0,
+    "calibration": 0.4634125,
+    "entity_accuracy": 0.0,
+    "sentiment_accuracy": 0.0,
+    "composite": 0.6648
+  },
+  "details": [
+    {
+      "input": "读取config.py",
+      "expected_intent": "read_file",
+      "actual_intent": "read_file",
+      "passed": true,
+      "latency_ms": 1.2
+    },
+    {
+      "input": "搜索cognitive_bus",
+      "expected_intent": "search",
+      "actual_intent": "search",
+      "passed": true,
+      "latency_ms": 0.2
+    },
+    {
+      "input": "主人你状态怎么样",
+      "expected_intent": "query_status",
+      "actual_intent": "query_status",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "运行ls -la",
+      "expected_intent": "run_command",
+      "actual_intent": "run_command",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "帮我写一个hello world",
+      "expected_intent": "generate",
+      "actual_intent": "generate",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "今天天气怎么样",
+      "expected_intent": "query_weather",
+      "actual_intent": "query_status",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "你好",
+      "expected_intent": "chat",
+      "actual_intent": "greeting",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "None",
+      "expected_intent": "unknown",
+      "actual_intent": "unknown",
+      "passed": true,
+      "latency_ms": 0.0
+    },
+    {
+      "input": "asdfghjkl",
+      "expected_intent": "unknown",
+      "actual_intent": "unknown",
+      "passed": true,
+      "latency_ms": 0.1
+    },
+    {
+      "input": "翻译这段话",
+      "expected_intent": "translate",
+      "actual_intent": "translate",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "总结一下这篇文章",
+      "expected_intent": "summarize",
+      "actual_intent": "summarize",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "帮我debug这个错误",
+      "expected_intent": "debug",
+      "actual_intent": "debug",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "部署到生产环境",
+      "expected_intent": "deploy",
+      "actual_intent": "deploy",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "测试一下功能",
+      "expected_intent": "test",
+      "actual_intent": "test",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "优化性能",
+      "expected_intent": "optimize",
+      "actual_intent": "optimize",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "安装python包",
+      "expected_intent": "install",
+      "actual_intent": "install",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "备份数据",
+      "expected_intent": "backup",
+      "actual_intent": "backup",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "查看日志",
+      "expected_intent": "monitor",
+      "actual_intent": "monitor",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "编辑main.py",
+      "expected_intent": "edit_file",
+      "actual_intent": "edit_file",
+      "passed": true,
+      "category": "extended_intent"
+    },
+    {
+      "input": "读取test.py",
+      "expected_entity": "file:test.py",
+      "found": false,
+      "passed": false,
+      "category": "entity_extraction"
+    },
+    {
+      "input": "打开 https://example.com",
+      "expected_entity": "url:https://example.com",
+      "found": false,
+      "passed": false,
+      "category": "entity_extraction"
+    },
+    {
+      "input": "运行 ls -la",
+      "expected_entity": "command:ls",
+      "found": false,
+      "passed": false,
+      "category": "entity_extraction"
+    },
+    {
+      "input": "明天下午三点",
+      "expected_entity": "time:明天",
+      "found": false,
+      "passed": false,
+      "category": "entity_extraction"
+    },
+    {
+      "input": "计算 123 乘以 456",
+      "expected_entity": "number:123",
+      "found": false,
+      "passed": false,
+      "category": "entity_extraction"
+    },
+    {
+      "input": "太好了！终于成功了！",
+      "expected_polarity": "positive",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    },
+    {
+      "input": "好烦啊，又出bug了",
+      "expected_polarity": "negative",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    },
+    {
+      "input": "读取test.py文件",
+      "expected_polarity": "neutral",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    },
+    {
+      "input": "谢谢你帮忙！",
+      "expected_polarity": "positive",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    },
+    {
+      "input": "好担心明天的考试",
+      "expected_polarity": "negative",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    },
+    {
+      "input": "好奇这是什么",
+      "expected_polarity": "neutral",
+      "actual_polarity": null,
+      "passed": false,
+      "category": "sentiment"
+    }
+  ],
+  "improvements": []
+}

@@ -1,0 +1,70 @@
+{
+  "version": "v3-r4",
+  "timestamp": 1784628173.908573,
+  "test_cases": 9,
+  "passed": 1,
+  "failed": 8,
+  "score": {
+    "accuracy": 0.1111111111111111,
+    "latency_ms": 0.0,
+    "robustness": 0.5,
+    "coverage": 0.1111111111111111,
+    "fusion_quality": 0.0,
+    "info_density": 0.0,
+    "chain_quality": 0.0,
+    "calibration": 0.0,
+    "entity_accuracy": 0.0,
+    "sentiment_accuracy": 0.0,
+    "composite": 0.1889
+  },
+  "details": [
+    {
+      "input": "读取config.py",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "搜索cognitive_bus",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "主人你状态怎么样",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "运行ls -la",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "帮我写一个hello world",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "今天天气怎么样",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "你好",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    },
+    {
+      "input": "None",
+      "expected_intent": "unknown",
+      "actual_intent": "unknown",
+      "passed": true,
+      "latency_ms": 0.0
+    },
+    {
+      "input": "asdfghjkl",
+      "error": "'MultiPathReasoner' object has no attribute 'reason'",
+      "passed": false
+    }
+  ],
+  "improvements": []
+}
