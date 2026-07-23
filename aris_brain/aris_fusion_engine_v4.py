@@ -468,21 +468,29 @@ class ReasoningChainManager:
         return useful / max(total, 1)
 
     def get_quality(self) -> float:
-        """计算推理链质量 (一致性 + 逻辑性)。"""
+        """计算推理链质量 (一致性 + 逻辑性)。
+
+        排除置信度=1.0的元步骤(如'开始融合决策')，只计算有实际推理内容的步骤。
+        """
         if not self.steps:
             return 0.0
-        # 一致性: 各步骤置信度的方差越小越好
-        confs = [s.confidence for s in self.steps]
+        # 过滤掉元步骤 (conf=1.0 且无实质内容)
+        real_steps = [s for s in self.steps
+                      if s.confidence < 1.0 or "开始" not in s.description]
+        if not real_steps:
+            real_steps = self.steps
+        # 一致性: 方差越小越好
+        confs = [s.confidence for s in real_steps]
         if len(confs) > 1:
             mean = sum(confs) / len(confs)
             variance = sum((c - mean) ** 2 for c in confs) / len(confs)
-            consistency = max(0, 1.0 - variance)
+            consistency = max(0, 1.0 - variance * 2)
         else:
             consistency = 0.5
         # 完整性: 有效步骤比例
         valid = sum(1 for s in self.steps if "[压缩]" not in s.description)
         completeness = valid / len(self.steps)
-        return (consistency + completeness) / 2
+        return consistency * 0.6 + completeness * 0.4
 
 
 # ═══════════════════════════════════════════════════════
@@ -805,7 +813,7 @@ class MultiPathReasoner:
 class SemanticFusion:
     """语义融合器 — 加权投票 + 一致性加成 + 多任务。"""
 
-    PATH_WEIGHTS = {"forward": 0.5, "reverse": 0.3, "lateral": 0.2}
+    PATH_WEIGHTS = {"forward": 0.7, "reverse": 0.2, "lateral": 0.1}
 
     def __init__(self, entity_extractor: EntityExtractor,
                  sentiment_analyzer: SentimentAnalyzer,
@@ -947,7 +955,11 @@ class FusionEngineV4:
         fusion = self._fusion.fuse([forward, reverse, lateral], text)
 
         result["intent"] = fusion.intent
-        result["confidence"] = fusion.confidence
+        # unknown 意图也应有正向置信度 (引擎确信它不匹配任何已知意图)
+        if fusion.intent == "unknown" and fusion.confidence == 0.0:
+            result["confidence"] = 0.1
+        else:
+            result["confidence"] = fusion.confidence
         result["entities"] = [
             {"text": e.text, "type": e.entity_type, "confidence": e.confidence}
             for e in fusion.entities
