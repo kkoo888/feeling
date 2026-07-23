@@ -201,7 +201,7 @@ class SentimentAnalyzer:
     DEGREE_WORDS = {
         "很": 1.5, "非常": 2.0, "极其": 3.0, "超级": 2.5, "特别": 2.0,
         "相当": 1.8, "比较": 1.2, "有点": 0.7, "稍微": 0.5, "略微": 0.5,
-        "太": 2.0, "真": 1.5, "好": 1.3, "挺": 1.3, "蛮": 1.2,
+        "太": 2.0, "真": 1.5, "挺": 1.3, "蛮": 1.2,
         "最": 2.5, "更": 1.5, "越": 1.5, "极": 3.0, "超": 2.0,
     }
     # 情绪映射
@@ -223,10 +223,14 @@ class SentimentAnalyzer:
         indicators: List[str] = []
         emotion_scores: Dict[str, float] = defaultdict(float)
 
-        # 扫描正面词
+        # 扫描正面词 (匹配所有出现位置)
         for word, pol in self.POSITIVE_WORDS.items():
-            idx = text.find(word)
-            if idx >= 0:
+            start_pos = 0
+            while True:
+                idx = text.find(word, start_pos)
+                if idx < 0:
+                    break
+                start_pos = idx + len(word)
                 # 检查否定词窗口
                 window_start = max(0, idx - self.NEGATION_WINDOW)
                 window = text[window_start:idx]
@@ -248,10 +252,14 @@ class SentimentAnalyzer:
                     pos_score += actual
                     indicators.append(f"+{word}")
 
-        # 扫描负面词
+        # 扫描负面词 (匹配所有出现位置)
         for word, pol in self.NEGATIVE_WORDS.items():
-            idx = text.find(word)
-            if idx >= 0:
+            start_pos = 0
+            while True:
+                idx = text.find(word, start_pos)
+                if idx < 0:
+                    break
+                start_pos = idx + len(word)
                 window_start = max(0, idx - self.NEGATION_WINDOW)
                 window = text[window_start:idx]
                 negated = any(neg in window for neg in self.NEGATION_WORDS)
@@ -347,6 +355,15 @@ class ThreeStageClassifier:
         text_lower = text.lower()
         best_intent = "unknown"
         best_score = 0.0
+
+        # 特殊规则优先 (结构化模式)
+        if re.search(r'(运行|执行)\s+[a-zA-Z]', text):
+            best_intent = "run_command"
+            best_score = 0.6
+        elif re.search(r'打开\s*https?://', text):
+            best_intent = "search"
+            best_score = 0.6
+
         for intent, keywords in self._keywords.items():
             matched = [kw for kw in keywords if kw in text_lower]
             if matched:
@@ -357,16 +374,6 @@ class ThreeStageClassifier:
                 if score > best_score:
                     best_score = score
                     best_intent = intent
-
-        # 特殊规则: "运行" + 命令 → run_command
-        if re.search(r'(运行|执行)\s+[a-zA-Z]', text):
-            best_intent = "run_command"
-            best_score = max(best_score, 0.6)
-
-        # 特殊规则: "打开" + URL → search
-        if re.search(r'打开\s*https?://', text):
-            best_intent = "search"
-            best_score = max(best_score, 0.6)
 
         # 置信度校准 (温度缩放)
         T = 0.5
@@ -703,8 +710,7 @@ class MultiPathReasoner:
             chain.add_step("forward", "常识推理", str(cs[:2]), min(confidence * 1.1, 1.0))
 
         return ReasoningPath("forward", intent, confidence,
-                             self._extract_params(text, intent),
-                             chain.to_list() if hasattr(chain, 'to_list') else [], chain)
+                             self._extract_params(text, intent), [], chain)
 
     def reverse(self, text: str) -> ReasoningPath:
         """反向路径: 目标反推。"""
@@ -774,9 +780,11 @@ class MultiPathReasoner:
 
     def _extract_params(self, text: str, intent: str) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
-        file_match = re.search(r'[a-zA-Z0-9_/.-]+\.(py|rs|md|json|txt|js|ts|go|java|c|cpp|h)', text)
-        if file_match:
-            params["file_path"] = file_match.group(0)
+        # 复用 EntityExtractor 提取文件实体
+        for e in self._entity_extractor.extract(text):
+            if e.entity_type == "file":
+                params["file_path"] = e.text
+                break
         time_words = {"今天": "today", "明天": "tomorrow", "后天": "day_after",
                       "早上": "morning", "中午": "noon", "晚上": "evening",
                       "下午": "afternoon", "昨天": "yesterday"}
