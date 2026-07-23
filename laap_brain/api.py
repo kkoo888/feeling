@@ -158,16 +158,40 @@ def process_with_laap(messages: list, model: str = "laap-core") -> dict:
     except Exception:
         pass
 
-    # ── Fallback ──
-    state = CognitiveState()
-    return {
-        "content": (
-            f"{state.to_preamble()}\n"
-            f"I received your message. My cognitive engines are processing it through "
-            f"my core architecture."
-        ),
-        "engine": "laap-fallback",
-    }
+    # ── Fallback: 调用 LLM 生成回复 ──
+    try:
+        from laap_brain.llm_gateway import llm_call
+
+        # 注入 PSI 认知上下文
+        psi_hint = ""
+        try:
+            psi_state_path = STATE_DIR / "latest.json"
+            if psi_state_path.exists():
+                psi = json.loads(psi_state_path.read_text(encoding="utf-8"))
+                needs = psi.get("needs", {})
+                emotion = psi.get("emotion", "")
+                psi_hint = f"[PSI: emotion={emotion}, needs={needs}]"
+        except Exception:
+            pass
+
+        llm_messages = []
+        if psi_hint:
+            llm_messages.append({"role": "system", "content": f"你是小茜。{psi_hint}"})
+        llm_messages.extend(messages)
+
+        content = llm_call(llm_messages, purpose="chat_completions")
+        return {"content": content, "engine": "llm-gateway"}
+    except Exception as e:
+        logger.warning(f"LLM gateway fallback failed: {e}")
+        state = CognitiveState()
+        return {
+            "content": (
+                f"{state.to_preamble()}\n"
+                f"I received your message. My cognitive engines are processing it through "
+                f"my core architecture."
+            ),
+            "engine": "laap-fallback",
+        }
 
 
 # ── HTTP Handlers ────────────────────────────────────────────
