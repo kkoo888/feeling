@@ -12,3 +12,6 @@ LAAP AGI 认知模块包。
 - self_model: 自我模型
 - memory_system: AGI 记忆系统
 """
+
+from .curriculum import CurriculumEngine
+from .meta_learning import MetaLearningEngine
