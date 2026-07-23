@@ -15,3 +15,6 @@ LAAP AGI 认知模块包。
 
 from .curriculum import CurriculumEngine
 from .meta_learning import MetaLearningEngine
+from .perception import UnifiedPerceptionEngine
+from .ctm import ContinuousThoughtEngine
+from .retnet_router import RetNetRouter
