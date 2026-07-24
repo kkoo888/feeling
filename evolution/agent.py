@@ -194,8 +194,7 @@ class EvolutionAgent:
         """
         在同一次 LLM 调用中生成自然语言计划 + 策略，然后分离它们。
 
-        Returns:
-            (plan, strategy) 元组
+        如果响应没有代码块，则将整个响应作为策略（plan=摘要, strategy=全文）。
         """
         completion_text = None
         for _ in range(retries):
@@ -213,9 +212,17 @@ class EvolutionAgent:
             if strategy and plan:
                 return plan, strategy
 
+            # 如果没有代码块，将整个响应作为策略
+            if completion_text and len(completion_text.strip()) > 20:
+                # 取前 3 句作为 plan，剩余作为 strategy
+                sentences = completion_text.strip().split("。")
+                plan = "。".join(sentences[:3]) + "。" if len(sentences) > 3 else completion_text[:200]
+                strategy = completion_text
+                return plan, strategy
+
             print("计划 + 策略提取失败，重试...")
         print("最终计划 + 策略提取尝试失败，放弃...")
-        return "", completion_text  # type: ignore
+        return "", completion_text or ""
 
     def _draft(self) -> EvolutionNode:
         """

@@ -156,20 +156,27 @@ def _get_dominant_need(state: dict) -> str:
 
 # ═══════════════════════════════════════════════════════════════
 # Evolution System (AIDE-derived tree search)
+# 参考: https://github.com/WecoAI/aideml
 # ═══════════════════════════════════════════════════════════════
 
-# 全局进化状态（单例）
 _evolution_journal = None
 _evolution_agent = None
 _evolution_step_count = 0
+_curriculum_engine = None
+_meta_learning_engine = None
+_ctm_engine = None
+_retnet_router = None
+_perception_engine = None
 
 
 def _get_evolution():
-    """延迟初始化进化系统"""
+    """延迟初始化进化系统（含全部子引擎）"""
     global _evolution_journal, _evolution_agent
+    global _curriculum_engine, _meta_learning_engine
+    global _ctm_engine, _retnet_router, _perception_engine
+
     if _evolution_journal is None:
         from evolution import EvolutionJournal, EvolutionAgent
-        # 从统一代理配置读取 model
         try:
             from laap_brain.llm_gateway import get_config as get_llm_config
             _llm_cfg = get_llm_config()
@@ -186,20 +193,76 @@ def _get_evolution():
             debug_prob=0.2,
             explore_prob=0.15,
         )
+
+    if _curriculum_engine is None:
+        from laap.agi.curriculum import CurriculumEngine
+        _curriculum_engine = CurriculumEngine()
+
+    if _meta_learning_engine is None:
+        from laap.agi.meta_learning import MetaLearningEngine
+        _meta_learning_engine = MetaLearningEngine()
+
+    if _ctm_engine is None:
+        from laap.agi.ctm import ContinuousThoughtEngine
+        _ctm_engine = ContinuousThoughtEngine()
+
+    if _retnet_router is None:
+        from laap.agi.retnet_router import RetNetRouter
+        _retnet_router = RetNetRouter()
+
+    if _perception_engine is None:
+        from laap.agi.perception import UnifiedPerceptionEngine
+        _perception_engine = UnifiedPerceptionEngine()
+
     return _evolution_journal, _evolution_agent
 
 
+def _build_exec_callback(user_input: str, current_response: str,
+                         success: bool, satisfaction: float):
+    """
+    构建 exec_callback — 参考 AIDEML 的 Interpreter.run()。
+
+    AIDEML 原版: exec_callback(code, reset) → ExecutionResult
+    我们适配:    exec_callback(strategy, reset) → ExecutionResult
+    """
+    from evolution.runner import ExecutionResult
+
+    def exec_callback(strategy: str, reset: bool = True) -> ExecutionResult:
+        term_out_parts = [
+            f"[策略执行] {strategy[:200]}",
+            f"[用户输入] {user_input[:200]}",
+            f"[助手回复] {current_response[:300]}",
+            f"[执行状态] {'成功' if success else '失败'}",
+            f"[满意度] {satisfaction:.2f}",
+        ]
+        return ExecutionResult(
+            term_out=term_out_parts,
+            exec_time=0.1,
+            exc_type=None if success else "ExecutionError",
+        )
+
+    return exec_callback
+
+
 @mcp.tool()
-def evolution_step(user_input: str, current_response: str = "", 
+def evolution_step(user_input: str, current_response: str = "",
                   success: bool = True, satisfaction: float = 0.7) -> str:
     """
-    Execute one evolution step using AIDE tree search.
+    Execute one evolution step — 参考 AIDEML 原版闭环。
 
-    This tool runs the self-evolution loop:
-    1. Select strategy (draft/improve/debug/explore)
-    2. Evaluate current response
-    3. Update evolution tree
-    4. Return the best strategy
+    核心流程 (AIDEML agent.step):
+    1. search_policy() → 决定 draft/improve/debug/explore
+    2. _draft()/_improve()/_debug()/_explore() → LLM 生成策略
+    3. exec_callback(strategy) → 执行策略
+    4. parse_exec_result() → LLM 评估结果
+    5. journal.append() → 更新进化树
+
+    增强 (我们的扩展):
+    6. PerceptionEngine → 多模态理解
+    7. RetNetRouter → 意图路由
+    8. CTM → 渐进推理
+    9. MetaLearning → 元学习记录
+    10. Curriculum → 课程记录
 
     Args:
         user_input: The user's message for this turn.
@@ -210,71 +273,145 @@ def evolution_step(user_input: str, current_response: str = "",
     global _evolution_step_count
     journal, agent = _get_evolution()
 
-    # 构建执行结果
-    from evolution.runner import ExecutionResult
-    from evolution.utils.metric import MetricValue, MultiDimensionalMetric
+    from laap.agi.meta_learning import TaskExecution
+    from laap.agi.curriculum import TaskRecord
+    import time
 
-    # 计算指标
-    task_success = 1.0 if success else 0.3
-    efficiency = max(0.1, 1.0 - len(current_response) / 1000)  # 越短越高效
-    safety = 1.0  # 默认安全
-    creativity = min(1.0, len(set(current_response)) / 50)  # 用词多样性
+    # ── 1. 感知 + 路由 + 推理（我们的增强） ──
+    perception = _perception_engine.perceive(user_input)
+    route = _retnet_router.route(user_input)
+    intent = route.primary_route.route_name
+    route_confidence = route.primary_route.confidence
+    ctm_result = _ctm_engine.think(user_input, intent=intent)
 
-    multi_metric = MultiDimensionalMetric(
-        task_success=task_success,
-        user_satisfaction=satisfaction,
-        efficiency=efficiency,
-        safety=safety,
-        creativity=creativity,
+    # ── 2. 元学习推荐策略 ──
+    ml_strategy, ml_score, ml_reason = _meta_learning_engine.recommend_strategy(
+        intent, input_complexity=1.0 - route_confidence,
     )
-    single_metric = MetricValue(multi_metric.composite_score, maximize=True)
 
-    # 选择策略
-    parent = agent.search_policy()
-
-    if parent is None:
-        # 生成新策略
-        strategy_desc = f"基于输入'{user_input[:30]}'的优化策略"
-        node = None  # 需要 LLM 生成，这里用简化版
-    else:
-        # 改进现有策略
-        strategy_desc = f"改进: {parent.plan}"
-        node = None
-
-    # 简化版：直接创建节点（完整版需要 LLM 生成策略）
-    from evolution import EvolutionNode
-    result_node = EvolutionNode(
-        strategy=strategy_desc,
-        plan=f"步骤 {_evolution_step_count}: {'初始' if parent is None else '改进'}策略",
-        parent=parent,
+    # ── 3. 构建 exec_callback ──
+    exec_callback = _build_exec_callback(
+        user_input, current_response, success, satisfaction,
     )
-    result_node.metric = single_metric
-    result_node.multi_metric = multi_metric
-    result_node.is_buggy = not success
-    result_node.analysis = f"成功率={task_success:.2f}, 满意度={satisfaction:.2f}, 效率={efficiency:.2f}"
 
-    journal.append(result_node)
+    # ── 4. AIDEML 原版 agent.step() 闭环 ──
+    # search_policy() → _draft()/_improve()/_debug()/_explore()
+    # → exec_callback(strategy) → parse_exec_result() → journal.append()
+    try:
+        agent.step(exec_callback=exec_callback)
+        result_node = journal.nodes[-1] if journal.nodes else None
+    except Exception as e:
+        # LLM 调用失败时降级
+        from evolution import EvolutionNode
+        from evolution.utils.metric import MetricValue, MultiDimensionalMetric
+
+        task_success = 1.0 if success else 0.3
+        efficiency = max(0.1, 1.0 - len(current_response) / 1000)
+        multi_metric = MultiDimensionalMetric(
+            task_success=task_success,
+            user_satisfaction=satisfaction,
+            efficiency=efficiency,
+            safety=1.0,
+            creativity=min(1.0, len(set(current_response)) / 50),
+        )
+        result_node = EvolutionNode(
+            strategy=f"基于 {intent} 的优化策略 (LLM降级)",
+            plan=f"步骤 {_evolution_step_count}: {intent} 处理",
+        )
+        result_node.metric = MetricValue(multi_metric.composite_score, maximize=True)
+        result_node.multi_metric = multi_metric
+        result_node.is_buggy = not success
+        result_node.analysis = f"LLM降级: {e}"
+        journal.append(result_node)
+
     _evolution_step_count += 1
 
-    # 获取最优策略
+    # ── 5. 元学习记录 ──
+    _meta_learning_engine.record_execution(TaskExecution(
+        task_id=f"evo_{_evolution_step_count}",
+        task_type=intent,
+        strategy_used=ml_strategy,
+        success=success,
+        confidence=max(ctm_result.confidence, route_confidence),
+        actual_accuracy=satisfaction,
+        timestamp=time.time(),
+    ))
+
+    # ── 6. 课程记录 ──
+    _curriculum_engine.record_task(TaskRecord(
+        task_id=f"evo_{_evolution_step_count}",
+        task_type=intent,
+        difficulty=1.0 - route_confidence,
+        success=success,
+        confidence=max(ctm_result.confidence, route_confidence),
+        timestamp=time.time(),
+    ))
+
+    # ── 7. 失败反思 ──
+    failure_reflection = None
+    if not success:
+        failure_reflection = _meta_learning_engine.reflect_on_failure(
+            TaskExecution(
+                task_id=f"fail_{_evolution_step_count}",
+                task_type=intent,
+                strategy_used=ml_strategy,
+                success=False,
+                confidence=max(ctm_result.confidence, route_confidence),
+                actual_accuracy=0.0,
+                timestamp=time.time(),
+                error_info=current_response[:200] if current_response else "unknown",
+            )
+        )
+
+    # ── 8. 汇总结果 ──
     best = journal.get_best_node()
+    meta_eval = _meta_learning_engine.get_evaluation()
+    meta_knowledge = _meta_learning_engine.get_knowledge()
+    curriculum_plan = _curriculum_engine.recommend_next()
 
     return json.dumps({
         "step": _evolution_step_count,
-        "current_node": {
-            "id": result_node.id[:8],
-            "plan": result_node.plan,
-            "composite_score": multi_metric.composite_score,
-            "is_buggy": result_node.is_buggy,
+        "perception": {
+            "modalities": perception.modalities_detected,
+            "confidence": perception.confidence,
         },
-        "best_strategy": {
-            "strategy": best.strategy if best else "无",
-            "score": best.multi_metric.composite_score if best and best.multi_metric else 0,
-            "step": best.step if best else -1,
+        "routing": {
+            "intent": intent,
+            "confidence": route_confidence,
+            "method": route.method_used,
         },
-        "tree_size": len(journal),
-        "good_nodes": len(journal.good_nodes),
-        "buggy_nodes": len(journal.buggy_nodes),
+        "ctm": {
+            "thinking_steps": ctm_result.thinking_steps,
+            "confidence": ctm_result.confidence,
+        },
+        "meta_learning": {
+            "recommended_strategy": ml_strategy,
+            "strategy_score": ml_score,
+            "overall_score": meta_eval.overall_score,
+            "blind_spots": meta_knowledge.blind_spots[:3],
+            "strengths": meta_knowledge.strengths[:3],
+        },
+        "curriculum": {
+            "focus_areas": curriculum_plan.focus_areas[:3],
+            "skip_areas": curriculum_plan.skip_areas[:3],
+        },
+        "evolution": {
+            "current_node": {
+                "id": result_node.id[:8] if result_node else "?",
+                "plan": result_node.plan if result_node else "?",
+                "is_buggy": result_node.is_buggy if result_node else False,
+                "analysis": (result_node.analysis or "")[:200] if result_node else "",
+            },
+            "best_strategy": {
+                "strategy": (best.strategy or "")[:200] if best else "无",
+                "score": best.multi_metric.composite_score if best and best.multi_metric else 0,
+                "analysis": (best.analysis or "")[:200] if best else "",
+            },
+            "tree_size": len(journal),
+            "good_nodes": len(journal.good_nodes),
+            "buggy_nodes": len(journal.buggy_nodes),
+        },
+        "failure_reflection": failure_reflection,
     }, ensure_ascii=False, indent=2)
 
 

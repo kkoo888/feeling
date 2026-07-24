@@ -115,14 +115,23 @@ def query(
     # 如果有 func_spec，尝试从输出中解析 JSON
     if func_spec is not None:
         try:
-            # 尝试从输出中提取 JSON
+            # 尝试从输出中提取 JSON（支持嵌套）
             import re
-            json_match = re.search(r'\{[^{}]*\}', output, re.DOTALL)
+            # 先尝试找完整的 JSON 对象
+            json_match = re.search(r'\{(?:[^{}]|\{[^{}]*\})*\}', output, re.DOTALL)
             if json_match:
                 parsed = json.loads(json_match.group())
                 output = parsed
         except (json.JSONDecodeError, AttributeError):
-            pass  # 解析失败就返回原始文本
+            # 尝试更宽松的匹配
+            try:
+                start = output.find('{')
+                end = output.rfind('}') + 1
+                if start >= 0 and end > start:
+                    parsed = json.loads(output[start:end])
+                    output = parsed
+            except (json.JSONDecodeError, ValueError):
+                pass  # 解析失败就返回原始文本
 
     info = {
         "model": gw["get_config"]().get("model", "unknown"),
