@@ -517,6 +517,115 @@ def evolution_report() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def evolution_execute_code(code: str, timeout: int = 60) -> str:
+    """
+    Execute Python code in an isolated process and return the result.
+
+    Uses AIDEML-style interpreter with timeout protection.
+
+    Args:
+        code: Python code to execute.
+        timeout: Maximum execution time in seconds.
+
+    Returns:
+        JSON with execution result (output, time, errors).
+    """
+    from evolution.code_executor import execute_code, is_valid_python
+
+    # 先验证语法
+    if not is_valid_python(code):
+        return json.dumps({
+            "success": False,
+            "error": "SyntaxError: 代码语法无效",
+            "output": [],
+        }, ensure_ascii=False)
+
+    result = execute_code(code, timeout=timeout)
+
+    return json.dumps({
+        "success": result.exc_type is None,
+        "output": result.term_out[-50:] if result.term_out else [],
+        "exec_time": round(result.exec_time, 3),
+        "exc_type": result.exc_type,
+        "exc_info": result.exc_info,
+    }, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def evolution_tree_html() -> str:
+    """
+    Generate an interactive HTML visualization of the evolution tree.
+
+    Returns:
+        Path to the generated HTML file.
+    """
+    from evolution.tree_viz import generate_html, save_best_solution
+
+    journal, _ = _get_evolution()
+
+    output_dir = Path(".openclaw/tmp/evolution_viz")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    html_path = output_dir / "tree.html"
+    generate_html(journal, html_path)
+
+    best_path = output_dir / "best_solution.txt"
+    save_best_solution(journal, best_path)
+
+    return json.dumps({
+        "tree_html": str(html_path),
+        "best_solution": str(best_path),
+        "total_nodes": len(journal),
+        "good_nodes": len(journal.good_nodes),
+    }, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def emotion_evolution_status() -> str:
+    """
+    Get emotion/personality evolution status.
+
+    Checks B5 fitness evolution and EmotionEngine state.
+
+    Returns:
+        JSON with emotion evolution status.
+    """
+    result = {
+        "emotion_engine": {},
+        "b5_evolution": {},
+    }
+
+    # EmotionEngine 状态
+    try:
+        from aris_brain.aris_emotion_engine import get_emotion_engine
+        eng = get_emotion_engine()
+        if hasattr(eng, "mood"):
+            mood = eng.mood
+            result["emotion_engine"] = {
+                "dopamine": round(mood.dopamine, 3),
+                "serotonin": round(mood.serotonin, 3),
+                "oxytocin": round(mood.oxytocin, 3),
+                "cortisol": round(mood.cortisol, 3),
+            }
+        result["emotion_engine"]["loaded"] = True
+    except Exception as e:
+        result["emotion_engine"] = {"loaded": False, "error": str(e)}
+
+    # B5 进化状态
+    b5_state_dir = Path("evolution/b5_trae_state")
+    if b5_state_dir.exists():
+        state_files = list(b5_state_dir.glob("*.json"))
+        result["b5_evolution"] = {
+            "state_files": len(state_files),
+            "latest": str(sorted(state_files)[-1]) if state_files else None,
+        }
+    else:
+        result["b5_evolution"] = {"state_files": 0, "note": "B5 进化未启动"}
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LAAP Brain MCP Server")
     parser.add_argument("--sse", action="store_true", help="Run in SSE mode")
