@@ -1118,17 +1118,18 @@ class 小茜CognitiveBridge:
     def _causal_action_select(self, ce) -> Optional[Dict]:
         """B4: 因果行动选择 — 用因果图指导小茜下一步行为。
 
+        已接入 B4 进化冠军模块 (score=10.0, 满分)。
+        冠军策略: 动态目标发现 + 全路径探索 + Target-Treatment 匹配
+                  + 递增多样性惩罚 (penalty=0.5)。
+
         参考:
           - Causal Bandits (Lattimore et al. 2016): 用因果图选择
             干预效应最大的 action, 利用已知的因果路径信息
           - CORE (Sauter et al. 2024): 用 RL agent 联合优化
             因果发现 + action 选择
 
-        算法:
-          1. 从因果图中找所有 treatment 变量(小茜可干预的)
-          2. 对每个 treatment, 查它的后代中是否有 outcome 变量
-          3. 对每条 treatment→outcome 路径调 intervene() 估计效应
-          4. 选效应最大的 action
+        Args:
+            ce: 因果引擎实例
 
         Returns:
             {
@@ -1140,55 +1141,18 @@ class 小茜CognitiveBridge:
             }
             或 None
         """
-        from causal_feature_extractor import get_variable_roles
-        roles = get_variable_roles()
-        treatments = roles.get("treatment", [])
-        outcomes = roles.get("outcome", [])
-
-        if not treatments or not outcomes:
+        try:
+            from b4_causal_action_select import causal_action_select as _b4_select
+            result = _b4_select(ce)
+            if result:
+                logger.info(f"[因果行动] B4选择: {result.get('action', '?')} "
+                            f"(效应={result.get('effect', 0):.2f}, "
+                            f"路径={result.get('path', '?')}, "
+                            f"探索={result.get('_explored_count', 0)}条)")
+            return result
+        except Exception as e:
+            logger.warning(f"[因果行动] B4模块调用失败: {e}")
             return None
-
-        best_action = None
-        best_effect = 0.0
-
-        for t_var in treatments:
-            # 查 t_var 在因果图中的后代(它能影响的变量)
-            descendants = ce.graph.get_descendants(t_var)
-
-            for o_var in outcomes:
-                # o_var 必须是 t_var 的后代才有因果路径
-                if o_var not in descendants and o_var != t_var:
-                    # 也检查直接边
-                    if f"{t_var}->{o_var}" not in ce.graph.edges:
-                        continue
-
-                # 估计干预效应
-                try:
-                    iv = ce.intervene(t_var, 1.0, o_var, n_samples=30)
-                    effect = iv.get("intervention_effect", 0)
-                except Exception:
-                    continue
-
-                if abs(effect) > abs(best_effect):
-                    best_effect = effect
-                    best_action = {
-                        "variable": t_var,
-                        "action": self._action_desc(t_var, effect),
-                        "effect": effect,
-                        "target": o_var,
-                        "path": f"{t_var}→{o_var}",
-                    }
-
-        return best_action
-
-    def _action_desc(self, var: str, effect: float) -> str:
-        """把因果变量名转为自然语言行动描述。"""
-        desc_map = {
-            "aris_initiative": ("提高主动性" if effect > 0 else "降低主动性"),
-            "aris_resp_len": ("增加回应长度" if effect > 0 else "缩短回应"),
-            "topic_code": ("优化话题选择" if effect > 0 else "避免当前话题"),
-        }
-        return desc_map.get(var, f"调整 {var}")
 
     def _run_agi_tick(self):
         """

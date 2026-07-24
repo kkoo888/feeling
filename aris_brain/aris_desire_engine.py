@@ -162,16 +162,8 @@ class DesireEngine:
     def causal_attribution(self, observed_effect: str) -> Dict:
         """因果归因: 找到观察效应的真正原因(剔除混杂变量)。
 
-        参考:
-          - Kelley 1967 共变法则: 原因和结果共同变化才是真正原因
-          - Pearl 1995 backdoor criterion: 用干预效应区分真正原因和混杂
-          - DoWhy identify_effect(): 自动识别可估的调整集
-
-        流程:
-          1. discover() 发现因果结构
-          2. 找所有指向 observed_effect 的父节点(候选原因)
-          3. 对每个候选原因做 intervene() 验证干预效应
-          4. 干预效应 > 阈值 → 真正原因; 否则 → 混杂变量
+        已接入 B6 进化冠军模块 (score=9.627)。
+        冠军策略: 相关性回退 + 动态目标发现 + 干预验证。
 
         Args:
             observed_effect: 观察到的效应变量名(如 "user_emotion_valence")
@@ -187,124 +179,42 @@ class DesireEngine:
         try:
             from laap.agi.causal import get_causal_engine
             ce = get_causal_engine()
-        except Exception:
+            from b6_causal_attribution import causal_attribution as _b6_attribution
+            result = _b6_attribution(ce, observed_effect)
+            logger.info(f"[因果归因] {observed_effect}: "
+                        f"真正原因={result.get('true_causes', [])}, "
+                        f"混杂={result.get('confounders', [])}")
+            return result
+        except Exception as e:
+            logger.warning(f"[因果归因] B6模块调用失败: {e}")
             return {"observed_effect": observed_effect,
                     "true_causes": [], "confounders": [], "effects": {}}
 
-        # 确保有足够的观测数据
-        if len(getattr(ce, 'observations', [])) < 10:
-            return {"observed_effect": observed_effect,
-                    "true_causes": [], "confounders": [], "effects": {},
-                    "note": "观测不足(需≥10条)"}
-
-        # 确保因果结构已发现
-        if not ce.graph.edges:
-            try:
-                ce.discover(alpha=0.05)
-            except Exception:
-                pass
-
-        if not ce.graph.edges:
-            return {"observed_effect": observed_effect,
-                    "true_causes": [], "confounders": [], "effects": {},
-                    "note": "无法发现因果结构"}
-
-        # 找所有指向 observed_effect 的父节点(候选原因)
-        parents = ce.graph.get_parents(observed_effect)
-        if not parents:
-            # 尝试找相关变量: 所有和 observed_effect 有边的变量
-            parents = []
-            for ek in ce.graph.edges:
-                parts = ek.split("->")
-                if len(parts) == 2:
-                    if parts[1] == observed_effect:
-                        parents.append(parts[0])
-                    elif parts[0] == observed_effect:
-                        parents.append(parts[1])
-
-        if not parents:
-            return {"observed_effect": observed_effect,
-                    "true_causes": [], "confounders": [], "effects": {},
-                    "note": "无候选原因变量"}
-
-        true_causes = []
-        confounders = []
-        effects = {}
-
-        for cause_var in parents:
-            try:
-                iv = ce.intervene(cause_var, 1.0, observed_effect, n_samples=30)
-                effect = iv.get("intervention_effect", 0)
-                effects[cause_var] = round(effect, 3)
-
-                if abs(effect) > 0.15:
-                    # 干预效应显著 → 真正原因
-                    true_causes.append(cause_var)
-                else:
-                    # 干预效应微弱 → 混杂变量
-                    confounders.append(cause_var)
-            except Exception:
-                confounders.append(cause_var)
-
-        logger.info(f"[因果归因] {observed_effect}: "
-                    f"真正原因={true_causes}, 混杂={confounders}")
-
-        return {
-            "observed_effect": observed_effect,
-            "true_causes": true_causes,
-            "confounders": confounders,
-            "effects": effects,
-        }
-
     def discover_new_desires_causal(self) -> List[str]:
-        """B6: 基于因果归因发现新欲望。
+        """B7: 基于因果归因发现新欲望。
+
+        已接入 B7 进化冠军模块 (score=9.341)。
+        冠军策略: 多目标发现 + 丰富 cause→desire 映射 + Sigmoid 强度校准。
 
         不同于 discover_new_desires() 用模板从话题生成欲望,
-        此方法用因果归因找出主人状态的真正原因,生成精准欲望。
+        此方法用因果归因找出主人状态的真正原因, 生成精准欲望。
+        B7 模块会直接通过 de.register_desire 注册发现的欲望。
 
         Returns:
-            新注册的欲望列表
+            新发现的欲望类型列表
         """
-        new_desires = []
-
-        # 对主人情绪做因果归因
-        attribution = self.causal_attribution("user_emotion_valence")
-        true_causes = attribution.get("true_causes", [])
-
-        for cause in true_causes:
-            effect = attribution.get("effects", {}).get(cause, 0)
-
-            # 根据 cause 变量类型生成不同欲望
-            if cause in ("aris_initiative", "aris_resp_len"):
-                # 小茜主动性 → 主人情绪好 → 强化主动性欲望
-                if self.register_desire(
-                    "proactive_engagement", 0.6,
-                    f"因果发现: 主动性→主人情绪(效应={effect:.2f})",
-                    4.0, expression="想更主动地表达"
-                ):
-                    new_desires.append("proactive_engagement")
-
-            elif cause in ("topic_code",):
-                # 话题选择 → 主人情绪好 → 探索好话题
-                if self.register_desire(
-                    "topic_optimization", 0.5,
-                    f"因果发现: 话题→主人情绪(效应={effect:.2f})",
-                    6.0, expression="想找到让主人开心的话题"
-                ):
-                    new_desires.append("topic_optimization")
-
-            elif cause in ("user_msg_len", "user_question_count"):
-                # 主人投入 → 主人情绪好 → 鼓励互动
-                if self.register_desire(
-                    "encourage_engagement", 0.4,
-                    f"因果发现: 主人投入→情绪(效应={effect:.2f})",
-                    8.0, expression="想鼓励主人多表达"
-                ):
-                    new_desires.append("encourage_engagement")
-
-        if new_desires:
-            logger.info(f"[因果归因→欲望] 发现 {len(new_desires)} 个精准欲望: {new_desires}")
-        return new_desires
+        try:
+            from laap.agi.causal import get_causal_engine
+            ce = get_causal_engine()
+            from b7_causal_desire import discover_new_desires_causal as _b7_discover
+            desires = _b7_discover(ce, de=self)
+            new_types = [d.get("type", "") for d in desires if d.get("type")]
+            if new_types:
+                logger.info(f"[因果欲望→发现] B7发现 {len(new_types)} 个精准欲望: {new_types}")
+            return new_types
+        except Exception as e:
+            logger.warning(f"[因果欲望] B7模块调用失败: {e}")
+            return []
 
     # ── 状态持久化 ──────────────────────────────────────
 

@@ -463,28 +463,25 @@ class GoalEngine:
                     if existing.domain == goal.domain:
                         score *= 0.3  # 大幅降分
 
-            # A4/B2: 因果效应评分 — 延迟获取因果引擎单例
+            # B2: 因果目标评分 — 使用进化后的 b2_causal_goal_scoring 模块
             try:
                 from laap.agi.causal import get_causal_engine
                 _ce = get_causal_engine()
             except Exception:
                 _ce = None
-            if _ce and hasattr(_ce, 'intervene') and len(getattr(_ce, 'observations', [])) >= 10:
+            if _ce is not None:
                 try:
-                    # 尝试用干预效应评估目标价值
-                    # do_var=目标领域, do_value=1.0(执行), target=主人回应
-                    iv = _ce.intervene(
-                        goal.domain.value, 1.0, "主人_responded",
-                        n_samples=30,
-                    )
-                    effect = iv.get("intervention_effect", 0)
-                    # 因果效应 > 0 说明做这件事会正向影响主人,加分
-                    if effect > 0.1:
-                        score += min(20, effect * 10)  # 最多 +20
-                        logger.debug(f"[因果] 目标 '{goal.description[:30]}' "
-                                     f"干预效应={effect:.2f}, +{min(20, effect*10):.0f}分")
+                    from b2_causal_goal_scoring import causal_goal_score as _b2_score, is_causal_ready as _b2_ready
+                    if _b2_ready(_ce):
+                        result = _b2_score(_ce, goal.domain.value, goal.description)
+                        bonus = result.get("bonus", 0)
+                        score += bonus
+                        logger.debug(f"[B2因果] 目标 '{goal.description[:30]}' "
+                                     f"效应={result.get('best_effect', 0):.2f}, "
+                                     f"置信度={result.get('confidence', 0):.2f}, "
+                                     f"加分={bonus:.1f}")
                 except Exception:
-                    pass  # 因果引擎不可用或变量不存在时静默跳过
+                    pass  # B2 模块不可用时静默跳过
 
             scored.append((goal, max(0, score)))
 
