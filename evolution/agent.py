@@ -13,17 +13,26 @@
 
 import logging
 import random
+from enum import Enum
 from typing import Any, Callable, cast
 
 from .backend import FunctionSpec, query
 from .runner import ExecutionResult
 from .journal import EvolutionJournal, EvolutionNode
+from .utils.metric import MetricValue, WorstMetricValue, MultiDimensionalMetric
 from .utils.response import extract_code, extract_text_up_to_code, wrap_code
 
 logger = logging.getLogger("evolution")
 
 
 ExecCallbackType = Callable[[str, bool], ExecutionResult]
+
+
+class SearchAction(Enum):
+    """search_policy() 的返回动作类型"""
+    DRAFT = "draft"       # 生成新草稿
+    EXPLORE = "explore"   # 探索全新方向
+
 
 # 策略评估的函数调用规范
 review_func_spec = FunctionSpec(
@@ -106,20 +115,19 @@ class EvolutionAgent:
         self.explore_prob = explore_prob
         self.max_debug_depth = max_debug_depth
 
-    def search_policy(self) -> EvolutionNode | None:
+    def search_policy(self) -> EvolutionNode | SearchAction:
         """
-        选择一个节点来工作（或 None 表示生成新节点）。
+        选择一个节点来工作，或返回 SearchAction 表示生成新节点。
 
-        决策逻辑：
-        1. 如果草稿不足 → 返回 None（生成新草稿）
-        2. 随机概率触发调试 → 选择可调试的 buggy 节点
-        3. 随机概率触发探索 → 返回 None（走探索路径）
-        4. 贪婪选择最佳节点
+        返回:
+            EvolutionNode: 选择的节点（improve/debug）
+            SearchAction.DRAFT: 生成新草稿
+            SearchAction.EXPLORE: 探索全新方向
         """
         # 初始草稿阶段
         if len(self.journal.draft_nodes) < self.num_drafts:
             logger.debug("[search policy] 草稿不足，生成新草稿")
-            return None
+            return SearchAction.DRAFT
 
         # 调试：随机概率选择 buggy 节点
         if random.random() < self.debug_prob:
@@ -136,16 +144,13 @@ class EvolutionAgent:
         # 探索：随机概率触发全新方向探索
         if random.random() < self.explore_prob:
             logger.debug("[search policy] 触发探索模式")
-            # 返回一个特殊标记，让 step() 知道要走 explore 路径
-            # 通过返回 None 并设置一个标志来区分
-            self._should_explore = True
-            return None
+            return SearchAction.EXPLORE
 
         # 回退到草稿：如果没有好节点
         good_nodes = self.journal.good_nodes
         if not good_nodes:
             logger.debug("[search policy] 无好节点，生成新草稿")
-            return None
+            return SearchAction.DRAFT
 
         # 贪婪：选择最佳节点
         greedy_node = self.journal.get_best_node()
@@ -214,9 +219,25 @@ class EvolutionAgent:
 
             # 如果没有代码块，将整个响应作为策略
             if completion_text and len(completion_text.strip()) > 20:
-                # 取前 3 句作为 plan，剩余作为 strategy
-                sentences = completion_text.strip().split("。")
-                plan = "。".join(sentences[:3]) + "。" if len(sentences) > 3 else completion_text[:200]
+                # 按句号或换行分割，取前 2-3 句作为 plan
+                separators = ['。', '. ', '\n']
+                plan_end = len(completion_text)
+                sep_count = 0
+                for sep in separators:
+                    pos = 0
+                    while pos < len(completion_text):
+                        idx = completion_text.find(sep, pos)
+                        if idx < 0:
+                            break
+                        sep_count += 1
+                        if sep_count >= 3:
+                            plan_end = idx + len(sep)
+                            break
+                        pos = idx + len(sep)
+                    if sep_count >= 3:
+                        break
+
+                plan = completion_text[:plan_end].strip()
                 strategy = completion_text
                 return plan, strategy
 
@@ -375,25 +396,24 @@ class EvolutionAgent:
         执行一步进化。
 
         根据 search_policy() 的结果决定行动：
-        - None + _should_explore → 探索新方向
-        - None → 生成新草稿
+        - SearchAction.EXPLORE → 探索新方向
+        - SearchAction.DRAFT → 生成新草稿
         - buggy 节点 → 调试
         - 好节点 → 改进
         """
-        self._should_explore = False
-        parent_node = self.search_policy()
+        parent = self.search_policy()
 
-        logger.debug(f"Agent 生成策略，父节点类型: {type(parent_node)}")
+        logger.debug(f"Agent 生成策略，父节点类型: {type(parent)}")
 
-        if parent_node is None:
-            if getattr(self, '_should_explore', False):
+        if isinstance(parent, SearchAction):
+            if parent == SearchAction.EXPLORE:
                 result_node = self._explore()
             else:
                 result_node = self._draft()
-        elif parent_node.is_buggy:
-            result_node = self._debug(parent_node)
+        elif parent.is_buggy:
+            result_node = self._debug(parent)
         else:
-            result_node = self._improve(parent_node)
+            result_node = self._improve(parent)
 
         self.parse_exec_result(
             node=result_node,
@@ -445,27 +465,21 @@ class EvolutionAgent:
         )
 
         if node.is_buggy:
-            from .utils.metric import WorstMetricValue
             node.metric = WorstMetricValue()
         else:
-            from .utils.metric import MetricValue
             node.metric = MetricValue(
                 response["metric"], maximize=not response["lower_is_better"]
             )
 
-        # 如果有 runner 的指标，尝试计算多维指标
+        # 计算多维指标
         try:
-            from .runner import AgentRunner
-            if hasattr(self, '_last_runner') and self._last_runner is not None:
-                metrics = self._last_runner.get_last_metrics()
-                if metrics and metrics.success:
-                    from .utils.metric import MultiDimensionalMetric
-                    node.multi_metric = MultiDimensionalMetric(
-                        task_success=1.0 if not node.is_buggy else 0.0,
-                        user_satisfaction=metrics.relevance_score if metrics.relevance_score > 0 else (node.metric.value if node.metric.value else 0.0),
-                        efficiency=max(0.0, 1.0 - metrics.response_time / 3600.0),
-                        safety=1.0 if node.exc_type is None else 0.5,
-                        creativity=0.5,  # 默认中等创造性
-                    )
+            exec_time = exec_result.exec_time if exec_result else 0.1
+            node.multi_metric = MultiDimensionalMetric(
+                task_success=1.0 if not node.is_buggy else 0.0,
+                user_satisfaction=node.metric.value if node.metric and node.metric.value else 0.0,
+                efficiency=max(0.0, 1.0 - exec_time / 3600.0),
+                safety=1.0 if node.exc_type is None else 0.5,
+                creativity=0.5,
+            )
         except Exception:
-            pass  # 多维指标是可选的，失败不影响主流程
+            pass  # 多维指标是可选的

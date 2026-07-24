@@ -168,12 +168,7 @@ class CodeInterpreter:
         """
         在子进程中执行代码。
 
-        Args:
-            code: Python 代码
-            reset_session: 是否重置会话
-
-        Returns:
-            ExecutionResult
+        超时处理参考 AIDEML: 先发 SIGINT，等 5 秒再 kill。
         """
         if reset_session:
             if self.process is not None:
@@ -200,40 +195,62 @@ class CodeInterpreter:
         assert state[0] == "state:ready"
 
         start_time = time.time()
-        timed_out = False
+        child_in_overtime = False
+
+        # 等待执行完成
+        while True:
+            try:
+                state = self.event_outq.get(timeout=1)
+                assert state[0] == "state:finished", state
+                exec_time = time.time() - start_time
+                break
+            except queue.Empty:
+                # 检查子进程是否意外死亡
+                if not child_in_overtime and not self.process.is_alive():
+                    return ExecutionResult(
+                        term_out=["REPL 子进程意外终止"],
+                        exec_time=time.time() - start_time,
+                        exc_type="ChildProcessError",
+                        exc_info=None,
+                        exc_stack=None,
+                    )
+
+                # 检查超时
+                running_time = time.time() - start_time
+                if self.timeout and running_time > self.timeout:
+                    logger.warning(f"执行超时 ({self.timeout}s)，发送 SIGINT")
+                    os.kill(self.process.pid, signal.SIGINT)
+                    child_in_overtime = True
+
+                    # 超过 5 秒还没停，强制 kill
+                    if running_time > self.timeout + 5:
+                        logger.warning("子进程未响应 SIGINT，强制 kill")
+                        self.cleanup()
+                        return ExecutionResult(
+                            term_out=[f"[超时] 执行超过 {self.timeout} 秒"],
+                            exec_time=self.timeout,
+                            exc_type="TimeoutError",
+                            exc_info=None,
+                            exc_stack=None,
+                        )
 
         # 收集输出
         term_out = []
+        collect_start = time.time()
         while True:
             try:
-                msg = self.result_outq.get(timeout=self.timeout)
+                if time.time() - collect_start > 5:  # 5 秒收集超时
+                    break
+                msg = self.result_outq.get(timeout=1)
             except queue.Empty:
-                timed_out = True
-                break
+                continue
             if msg is None:
                 break
             term_out.append(msg)
 
-        if timed_out:
-            self.cleanup()
-            return ExecutionResult(
-                term_out=term_out + [f"\n[超时] 执行超过 {self.timeout} 秒"],
-                exec_time=self.timeout,
-                exc_type="TimeoutError",
-                exc_info=None,
-                exc_stack=None,
-            )
-
-        # 等待执行完成事件
-        try:
-            event = self.event_outq.get(timeout=5)
-        except queue.Empty:
-            event = ("state:finished", "UnknownError", None, None)
-
-        exec_time = time.time() - start_time
-        exc_type = event[1] if len(event) > 1 else None
-        exc_info = event[2] if len(event) > 2 else None
-        exc_stack = event[3] if len(event) > 3 else None
+        exc_type = state[1] if len(state) > 1 else None
+        exc_info = state[2] if len(state) > 2 else None
+        exc_stack = state[3] if len(state) > 3 else None
 
         return ExecutionResult(
             term_out=term_out,

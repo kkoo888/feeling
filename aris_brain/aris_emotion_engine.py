@@ -489,10 +489,8 @@ class EmotionEngine:
         self.hormone = MoodSystem()
         self.needs = NeedHierarchy()
         self.consciousness = ConsciousnessModeSystem()
-        # 镜像神经元和躯体标记在单agent场景中不活跃
-        # （保留类定义供未来多agent扩展，但不再实例化）
-        self.mirror = None
-        self.somatic = None
+        self.mirror = MirrorNeuronSystem()
+        self.somatic = SomaticMarkerSystem()
 
         # ── 融合深化模块 ──
         self._deepen_loaded = False
@@ -597,7 +595,7 @@ class EmotionEngine:
             new_emotion = "anxious"
             intensity = min(0.9, tensions[NeedLevel.PHYSIOLOGICAL] / 100)
             valence, arousal = -0.4, 0.7
-        elif tensions[NeedLevel.BELONGING] > 30:
+        elif tensions[NeedLevel.BELONGING] > 50:  # 提高阈值，避免正常社交需求触发 lonely
             new_emotion = "lonely"
             intensity, valence, arousal = 0.6, -0.3, 0.4
         elif sa.current_value > 85:
@@ -616,18 +614,20 @@ class EmotionEngine:
             new_emotion = "tranquil"
             intensity, valence, arousal = 0.3, 0.1, 0.2
 
-        old = self.primary_emotion
-        self.primary_emotion = new_emotion
-        self.emotion_intensity = intensity * 0.7 + self.emotion_intensity * 0.3
-        self.valence = valence * 0.5 + self.valence * 0.5
-        self.arousal = arousal * 0.5 + self.arousal * 0.5
+        # 只在当前情感是默认值、或需求紧急时才覆盖
+        if self.primary_emotion in ("tranquil", "neutral") or p.is_critical or s.is_critical:
+            old = self.primary_emotion
+            self.primary_emotion = new_emotion
+            self.emotion_intensity = intensity * 0.7 + self.emotion_intensity * 0.3
+            self.valence = valence * 0.5 + self.valence * 0.5
+            self.arousal = arousal * 0.5 + self.arousal * 0.5
 
-        if old != new_emotion:
-            self.emotion_history.append({
-                "ts": time.time(), "from": old, "to": new_emotion,
-                "intensity": self.emotion_intensity,
-            })
-            self._thought(f"情感转变: {old} -> {new_emotion} ({self.emotion_intensity:.2f})")
+            if old != new_emotion:
+                self.emotion_history.append({
+                    "ts": time.time(), "from": old, "to": new_emotion,
+                    "intensity": self.emotion_intensity,
+                })
+                self._thought(f"情感转变: {old} -> {new_emotion} ({self.emotion_intensity:.2f})")
 
     def _thought(self, content: str):
         self.thought_stream.append({"ts": time.time(), "content": content})
@@ -650,7 +650,24 @@ class EmotionEngine:
 
         if self.somatic:
             self.somatic.mark(f"stimulus:{source}", valence, arousal, intensity)
-        self._update_emotion_from_needs()
+
+        # 更新情感状态：刺激优先，需求补充
+        old = self.primary_emotion
+        if primary_emotion and primary_emotion != "neutral":
+            # 刺激直接决定情感
+            self.primary_emotion = primary_emotion
+            self.valence = valence * 0.6 + self.valence * 0.4
+            self.arousal = arousal * 0.6 + self.arousal * 0.4
+            self.emotion_intensity = intensity * 0.7 + self.emotion_intensity * 0.3
+        else:
+            # 无明确刺激时，从需求推断
+            self._update_emotion_from_needs()
+
+        if old != self.primary_emotion:
+            self.emotion_history.append({
+                "ts": time.time(), "from": old, "to": self.primary_emotion,
+                "intensity": self.emotion_intensity, "source": source,
+            })
 
     def observe_agent(self, agent: str, action: str, emotion: str = None, intensity: float = 0.5):
         if not self.mirror:

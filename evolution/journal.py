@@ -186,7 +186,7 @@ class EvolutionJournal(DataClassJsonMixin):
         return max(scored, key=lambda n: n.metric)
 
     def generate_summary(self, include_strategy: bool = False) -> str:
-        """生成日志摘要，供 Agent 参考"""
+        """生成日志摘要，供 Agent 参考（含指标值）"""
         summary = []
         for n in self.good_nodes:
             summary_part = f"设计: {n.plan}\n"
@@ -196,7 +196,8 @@ class EvolutionJournal(DataClassJsonMixin):
             if n.metric is not None:
                 summary_part += f"验证指标: {n.metric.value}\n"
             if n.multi_metric is not None:
-                summary_part += f"多维评估: {n.multi_metric}\n"
+                m = n.multi_metric
+                summary_part += f"多维评估: success={m.task_success:.2f} satisfaction={m.user_satisfaction:.2f} efficiency={m.efficiency:.2f}\n"
             summary.append(summary_part)
         return "\n-------------------------------\n".join(summary)
 

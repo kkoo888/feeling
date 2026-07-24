@@ -24,9 +24,13 @@ Tools:
 
 import argparse
 import json
+import logging
 import os
 import sys
+import time
 from pathlib import Path
+
+logger = logging.getLogger("mcp.laap")
 
 # Make LAAP brain modules importable
 LAAP_ROOT = Path(__file__).resolve().parent.parent
@@ -167,13 +171,16 @@ _meta_learning_engine = None
 _ctm_engine = None
 _retnet_router = None
 _perception_engine = None
+_code_interpreter = None
+_EVO_JOURNAL_PATH = Path(".openclaw/tmp/evolution_journal.json")
+_EVO_WORKSPACE = Path(".openclaw/tmp/evo_workspace")
 
 
 def _get_evolution():
     """延迟初始化进化系统（含全部子引擎）"""
     global _evolution_journal, _evolution_agent
     global _curriculum_engine, _meta_learning_engine
-    global _ctm_engine, _retnet_router, _perception_engine
+    global _ctm_engine, _retnet_router, _perception_engine, _code_interpreter
 
     if _evolution_journal is None:
         from evolution import EvolutionJournal, EvolutionAgent
@@ -184,7 +191,24 @@ def _get_evolution():
         except Exception:
             _model = "gpt-4-turbo"
 
+        # 持久化: 尝试从文件恢复
         _evolution_journal = EvolutionJournal()
+        if _EVO_JOURNAL_PATH.exists():
+            try:
+                saved = json.loads(_EVO_JOURNAL_PATH.read_text(encoding="utf-8"))
+                from evolution import EvolutionNode
+                for nd in saved.get("nodes", []):
+                    node = EvolutionNode(strategy=nd.get("strategy", ""), plan=nd.get("plan", ""))
+                    node.is_buggy = nd.get("is_buggy", False)
+                    node.analysis = nd.get("analysis", "")
+                    if nd.get("metric") is not None:
+                        from evolution.utils.metric import MetricValue
+                        node.metric = MetricValue(nd["metric"], maximize=True)
+                    _evolution_journal.append(node)
+                logger.info(f"进化日志已恢复: {len(_evolution_journal)} 节点")
+            except Exception as e:
+                logger.warning(f"恢复进化日志失败: {e}")
+
         _evolution_agent = EvolutionAgent(
             task_desc="优化小茜的对话策略：让回复更贴心、更高效、更有深度",
             journal=_evolution_journal,
@@ -193,6 +217,11 @@ def _get_evolution():
             debug_prob=0.2,
             explore_prob=0.15,
         )
+
+    if _code_interpreter is None:
+        from evolution.code_executor import CodeInterpreter
+        _EVO_WORKSPACE.mkdir(parents=True, exist_ok=True)
+        _code_interpreter = CodeInterpreter(working_dir=_EVO_WORKSPACE, timeout=60)
 
     if _curriculum_engine is None:
         from laap.agi.curriculum import CurriculumEngine
@@ -217,26 +246,62 @@ def _get_evolution():
     return _evolution_journal, _evolution_agent
 
 
-def _build_exec_callback(user_input: str, current_response: str,
-                         success: bool, satisfaction: float):
-    """
-    构建 exec_callback — 参考 AIDEML 的 Interpreter.run()。
+def _save_journal():
+    """持久化进化日志"""
+    pass
+    journal, _ = _get_evolution()
+    _EVO_JOURNAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    nodes = []
+    for n in journal.nodes:
+        nodes.append({
+            "id": n.id,
+            "strategy": (n.strategy or "")[:2000],
+            "plan": n.plan or "",
+            "is_buggy": n.is_buggy,
+            "analysis": (n.analysis or "")[:500],
+            "metric": n.metric.value if n.metric else None,
+            "step": n.step,
+        })
+    _EVO_JOURNAL_PATH.write_text(
+        json.dumps({"nodes": nodes, "saved_at": time.time()}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
-    AIDEML 原版: exec_callback(code, reset) → ExecutionResult
-    我们适配:    exec_callback(strategy, reset) → ExecutionResult
-    """
+
+def _build_exec_callback_code():
+    """代码进化: 用 CodeInterpreter 真实执行代码"""
+    from evolution.runner import ExecutionResult
+    interpreter = _code_interpreter
+
+    def exec_callback(code: str, reset: bool = True) -> ExecutionResult:
+        # 先验证语法
+        from evolution.code_executor import is_valid_python
+        if not is_valid_python(code):
+            return ExecutionResult(
+                term_out=["SyntaxError: 代码语法无效"],
+                exec_time=0,
+                exc_type="SyntaxError",
+            )
+        return interpreter.run(code, reset_session=reset)
+
+    return exec_callback
+
+
+def _build_exec_callback_dialogue(user_input: str, current_response: str,
+                                  success: bool, satisfaction: float):
+    """对话进化: 模拟策略执行结果"""
     from evolution.runner import ExecutionResult
 
     def exec_callback(strategy: str, reset: bool = True) -> ExecutionResult:
-        term_out_parts = [
-            f"[策略执行] {strategy[:200]}",
-            f"[用户输入] {user_input[:200]}",
-            f"[助手回复] {current_response[:300]}",
-            f"[执行状态] {'成功' if success else '失败'}",
+        term_out = [
+            f"[策略] {strategy[:200]}",
+            f"[输入] {user_input[:200]}",
+            f"[回复] {current_response[:300]}",
+            f"[状态] {'成功' if success else '失败'}",
             f"[满意度] {satisfaction:.2f}",
         ]
         return ExecutionResult(
-            term_out=term_out_parts,
+            term_out=term_out,
             exec_time=0.1,
             exc_type=None if success else "ExecutionError",
         )
@@ -275,7 +340,7 @@ def evolution_step(user_input: str, current_response: str = "",
 
     from laap.agi.meta_learning import TaskExecution
     from laap.agi.curriculum import TaskRecord
-    import time
+    pass
 
     # ── 1. 感知 + 路由 + 推理（我们的增强） ──
     perception = _perception_engine.perceive(user_input)
@@ -289,8 +354,8 @@ def evolution_step(user_input: str, current_response: str = "",
         intent, input_complexity=1.0 - route_confidence,
     )
 
-    # ── 3. 构建 exec_callback ──
-    exec_callback = _build_exec_callback(
+    # ── 3. 构建 exec_callback（对话进化） ──
+    exec_callback = _build_exec_callback_dialogue(
         user_input, current_response, success, satisfaction,
     )
 
@@ -325,6 +390,7 @@ def evolution_step(user_input: str, current_response: str = "",
         journal.append(result_node)
 
     _evolution_step_count += 1
+    _save_journal()  # 持久化
 
     # ── 5. 元学习记录 ──
     _meta_learning_engine.record_execution(TaskExecution(
@@ -533,7 +599,6 @@ def evolution_execute_code(code: str, timeout: int = 60) -> str:
     """
     from evolution.code_executor import execute_code, is_valid_python
 
-    # 先验证语法
     if not is_valid_python(code):
         return json.dumps({
             "success": False,
@@ -549,6 +614,133 @@ def evolution_execute_code(code: str, timeout: int = 60) -> str:
         "exec_time": round(result.exec_time, 3),
         "exc_type": result.exc_type,
         "exc_info": result.exc_info,
+    }, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def evolution_code(engine_path: str, improvement_desc: str) -> str:
+    """
+    Evolve a project engine: LLM generates improvements → test in project.
+
+    This is the core code evolution tool. It:
+    1. Reads the current engine code
+    2. Asks LLM to generate improvements
+    3. Saves the improved code to evolution_versions/
+    4. Evaluates it with the project's evaluator
+    5. Returns comparison with the original
+
+    Args:
+        engine_path: Path to the engine file (e.g., 'aris_brain/aris_fusion_engine_v4.py')
+        improvement_desc: What to improve (e.g., '提升意图识别准确率')
+
+    Returns:
+        JSON with evolution result and evaluation scores.
+    """
+    import importlib.util
+    from evolution.evaluator import evaluate_fusion_engine, save_eval
+
+    class W:
+        def __init__(self, e): self._e = e
+        def process(self, t): return self._e.process(t)
+
+    engine_file = Path(engine_path)
+    if not engine_file.exists():
+        return json.dumps({"error": f"引擎文件不存在: {engine_path}"})
+
+    # 读取当前代码
+    current_code = engine_file.read_text(encoding="utf-8")
+
+    # 评估当前版本
+    try:
+        spec = importlib.util.spec_from_file_location("current_engine", str(engine_file))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        eng = None
+        for f in ("get_engine_v4", "get_engine_v3", "get_engine_v2", "get_engine"):
+            if hasattr(mod, f):
+                eng = getattr(mod, f)()
+                break
+        if eng is None:
+            for c in ("FusionEngineV4", "FusionEngineV3", "FusionEngineV2"):
+                if hasattr(mod, c):
+                    eng = getattr(mod, c)()
+                    break
+
+        current_eval = evaluate_fusion_engine(W(eng), version="current")
+        current_score = current_eval.score.to_dict()
+    except Exception as e:
+        return json.dumps({"error": f"评估当前版本失败: {e}"})
+
+    # LLM 生成改进
+    try:
+        from evolution.backend import query
+        response = query(
+            system_message="你是 Python 代码优化专家。只输出完整 Python 代码，不要解释。",
+            user_message=(
+                f"优化以下引擎代码，改进目标: {improvement_desc}\n\n"
+                f"当前评估分数:\n{json.dumps(current_score, indent=2)}\n\n"
+                f"代码:\n```python\n{current_code}\n```\n"
+                f"\n输出完整代码。"
+            ),
+            max_tokens=12000,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"LLM 生成失败: {e}"})
+
+    # 提取代码
+    import re
+    clean = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+    cm = re.search(r'```python\s*\n(.*?)```', clean, re.DOTALL)
+    new_code = cm.group(1).strip() if cm else clean.strip()
+
+    if len(new_code) < 500:
+        return json.dumps({"error": "生成代码过短", "length": len(new_code)})
+
+    # 保存到 evolution_versions/
+    versions_dir = Path("aris_brain/evolution_versions")
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    existing = list(versions_dir.glob("v3-r*.py"))
+    next_num = max([int(f.stem.split("r")[1]) for f in existing], default=0) + 1
+    new_path = versions_dir / f"v3-r{next_num}.py"
+    new_path.write_text(new_code, encoding="utf-8")
+
+    # 评估新版本
+    try:
+        spec2 = importlib.util.spec_from_file_location("new_engine", str(new_path))
+        mod2 = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(mod2)
+        eng2 = None
+        for f in ("get_engine_v4", "get_engine_v3", "get_engine_v2", "get_engine"):
+            if hasattr(mod2, f):
+                eng2 = getattr(mod2, f)()
+                break
+        if eng2 is None:
+            for c in ("FusionEngineV4", "FusionEngineV3", "FusionEngineV2"):
+                if hasattr(mod2, c):
+                    eng2 = getattr(mod2, c)()
+                    break
+
+        new_eval = evaluate_fusion_engine(W(eng2), version=f"v3-r{next_num}")
+        save_eval(new_eval)
+        new_score = new_eval.score.to_dict()
+    except Exception as e:
+        return json.dumps({
+            "error": f"评估新版本失败: {e}",
+            "new_file": str(new_path),
+        })
+
+    # 对比
+    delta = {}
+    for k in current_score:
+        if k in new_score:
+            delta[k] = round(new_score[k] - current_score[k], 4)
+
+    return json.dumps({
+        "new_file": str(new_path),
+        "current_score": current_score,
+        "new_score": new_score,
+        "delta": delta,
+        "improved": new_score.get("composite", 0) > current_score.get("composite", 0),
     }, ensure_ascii=False, indent=2)
 
 
@@ -598,10 +790,10 @@ def emotion_evolution_status() -> str:
 
     # EmotionEngine 状态
     try:
-        from aris_brain.aris_emotion_engine import get_emotion_engine
-        eng = get_emotion_engine()
-        if hasattr(eng, "mood"):
-            mood = eng.mood
+        from aris_brain.aris_emotion_engine import EmotionEngine
+        eng = EmotionEngine()
+        if hasattr(eng, "hormone") and hasattr(eng.hormone, "mood"):
+            mood = eng.hormone.mood
             result["emotion_engine"] = {
                 "dopamine": round(mood.dopamine, 3),
                 "serotonin": round(mood.serotonin, 3),
@@ -622,6 +814,165 @@ def emotion_evolution_status() -> str:
         }
     else:
         result["b5_evolution"] = {"state_files": 0, "note": "B5 进化未启动"}
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def emotion_evolution_step(user_input: str, current_response: str,
+                          success: bool = True, satisfaction: float = 0.7) -> str:
+    """
+    Execute one emotion evolution step — 接入 EmotionEngine 完整接口。
+
+    调用:
+    1. eng.stimulate() — 情感刺激 (效价/唤醒/情绪)
+    2. eng.satisfy_need() — 马斯洛需求满足
+    3. eng.observe_agent() — 镜像神经元 (共情)
+    4. eng.hormone.mood.mark() — 躯体标记 (情感记忆)
+    5. eng.tick() — 自然衰减
+    6. eng.meta_cognition() — 自我认知
+
+    Args:
+        user_input: The user's message.
+        current_response: The assistant's response.
+        success: Whether the response was successful.
+        satisfaction: User satisfaction score [0, 1].
+
+    Returns:
+        JSON with emotion evolution result.
+    """
+    from aris_brain.aris_emotion_engine import EmotionEngine, NeedLevel
+
+    eng = EmotionEngine()
+    result = {
+        "step": 0,
+        "state_before": {},
+        "stimulate": {},
+        "need_satisfaction": {},
+        "mirror": {},
+        "somatic_mark": {},
+        "state_after": {},
+        "meta_cognition": {},
+        "evolution": {},
+    }
+
+    # ── 1. 记录当前状态 ──
+    result["state_before"] = eng.get_full_state()
+
+    # ── 2. 情感刺激: eng.stimulate() ──
+    # 正面交互 → 正效价, 高唤醒
+    # 负面交互 → 负效价, 高唤醒
+    if success:
+        valence = 0.3 + satisfaction * 0.5  # 0.3 ~ 0.8
+        arousal = 0.4 + satisfaction * 0.3  # 0.4 ~ 0.7
+        emotion = "joy" if satisfaction > 0.7 else "calm"
+    else:
+        valence = -0.3 - (1 - satisfaction) * 0.4  # -0.3 ~ -0.7
+        arousal = 0.5 + (1 - satisfaction) * 0.3   # 0.5 ~ 0.8
+        emotion = "anger" if satisfaction < 0.3 else "sorrow"
+
+    eng.stimulate(
+        source=f"user_interaction:{user_input[:30]}",
+        valence=valence,
+        arousal=arousal,
+        intensity=abs(valence),
+        primary_emotion=emotion,
+    )
+    result["stimulate"] = {
+        "valence": round(valence, 3),
+        "arousal": round(arousal, 3),
+        "emotion": emotion,
+        "intensity": round(abs(valence), 3),
+    }
+
+    # ── 3. 需求满足: eng.satisfy_need() ──
+    if success and satisfaction > 0.7:
+        # 正面交互满足归属感和自尊
+        eng.satisfy_need(NeedLevel.BELONGING, satisfaction * 3, "user_praise")
+        eng.satisfy_need(NeedLevel.ESTEEM, satisfaction * 2, "user_satisfaction")
+        result["need_satisfaction"] = {
+            "BELONGING": round(satisfaction * 3, 2),
+            "ESTEEM": round(satisfaction * 2, 2),
+        }
+    elif not success:
+        # 负面交互降低安全感
+        eng.needs.needs[NeedLevel.SAFETY].current_value = max(0,
+            eng.needs.needs[NeedLevel.SAFETY].current_value - 5)
+        result["need_satisfaction"] = {"SAFETY": -5}
+
+    # ── 4. 镜像神经元: eng.observe_agent() ──
+    if "主人" in user_input or "你" in user_input:
+        action = "smile" if success else "frown"
+        mirror_result = eng.observe_agent(
+            agent="user", action=action,
+            emotion=emotion, intensity=abs(valence),
+        )
+        result["mirror"] = {
+            "inferred_emotion": mirror_result.get("inferred_emotion"),
+            "empathy": mirror_result.get("empathy", 0),
+        }
+
+    # ── 5. 躯体标记: mood.mark() (情感记忆) ──
+    situation = user_input[:50]
+    if hasattr(eng, 'somatic') and eng.somatic:
+        eng.somatic.mark(situation, valence, arousal, abs(valence))
+        recalled = eng.somatic.recall(situation)
+        result["somatic_mark"] = {
+            "situation": situation,
+            "valence": round(valence, 3),
+            "recalled_gut": round(recalled, 3) if recalled else None,
+            "total_markers": len(eng.somatic.markers),
+        }
+
+    # ── 6. 自然衰减: eng.tick() ──
+    eng.tick(dt=1.0)
+
+    # ── 7. 自我认知: eng.meta_cognition() ──
+    eng.meta_cognition()
+    result["meta_cognition"] = {
+        "primary_emotion": eng.primary_emotion,
+        "emotion_intensity": round(eng.emotion_intensity, 3),
+        "valence": round(eng.valence, 3),
+        "arousal": round(eng.arousal, 3),
+    }
+
+    # ── 8. 记录状态变化 ──
+    result["state_after"] = eng.get_full_state()
+
+    # ── 9. 记录到进化日志 ──
+    journal, _ = _get_evolution()
+    from evolution import EvolutionNode
+    from evolution.utils.metric import MetricValue, MultiDimensionalMetric
+
+    multi = MultiDimensionalMetric(
+        task_success=1.0 if success else 0.3,
+        user_satisfaction=satisfaction,
+        efficiency=0.8,
+        safety=1.0 if success else 0.5,
+        creativity=0.5,
+    )
+    node = EvolutionNode(
+        strategy=f"emotion: {user_input[:50]}",
+        plan=f"情感进化 {len(journal)}: {emotion} (v={valence:.2f})",
+    )
+    node.metric = MetricValue(multi.composite_score, maximize=True)
+    node.multi_metric = multi
+    node.is_buggy = not success
+    node.analysis = (
+        f"满意度={satisfaction:.2f} 情绪={emotion} "
+        f"效价={valence:.2f} 唤醒={arousal:.2f} "
+        f"主体情感={eng.primary_emotion}"
+    )
+    journal.append(node)
+    _save_journal()
+
+    result["step"] = len(journal)
+    result["evolution"] = {
+        "node_id": node.id[:8],
+        "composite_score": round(multi.composite_score, 3),
+        "is_buggy": node.is_buggy,
+        "tree_size": len(journal),
+    }
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
